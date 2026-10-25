@@ -273,7 +273,9 @@ no host cron.
 
 - Dependencies: `pymysql` (database), `caldav` (calendars; brings `icalendar` and `recurring-ical-events`),
   `python-dotenv`. Later: the Anthropic SDK. CLI uses the standard-library `argparse`; no ORM.
-- Development uses a `uv`-managed virtual environment in `.venv` (see README).
+- Exact versions (with hashes) of every dependency are pinned in `uv.lock`; development (`uv sync`) and the Docker
+  image install from it, so builds are reproducible and upgrades are explicit (`uv lock --upgrade`).
+- The image is a two-stage build (uv only in the build stage) and runs as a non-root `app` user.
 
 ### Modules (`src/planner/`)
 
