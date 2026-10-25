@@ -22,5 +22,8 @@ planner = "planner.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+planner = ["migrations/*.sql"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

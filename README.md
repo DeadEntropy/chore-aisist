@@ -15,7 +15,7 @@ src/planner/
   db.py         all SQL, including migrations
   seed.py       import / export chores.json
   cli.py        the `planner` command
-migrations/     schema changes, applied in name order by `planner migrate`
+  migrations/   schema changes, applied in name order by `planner migrate`
 tests/          pytest; database tests need a throwaway MariaDB (see below)
 deploy/         compose template + .env.example for the deployment folder
 chores.json     seed data, loaded once with `planner import`
@@ -51,7 +51,7 @@ docker rm -f chore-test-db
 
 ```
 planner migrate                          create / upgrade tables
-planner import [chores.json]             load seed data (adds missing chores only)
+planner import chores.json               load seed data (adds missing chores only)
 planner export out.json                  snapshot the database as JSON
 planner chore list [--all]               show the catalog
 planner chore add <id> name=... category=home|garden type=recurring|one_off [more fields]
@@ -71,7 +71,7 @@ docker build -t chore-aisist:0.1.0 .
 cd <deploy-dir>/chore-aisist
 docker compose up -d chore-aisist-db
 docker compose run --rm chore-aisist migrate
-docker compose run --rm chore-aisist import
+docker compose run --rm chore-aisist import /app/chores.json
 ```
 
 | Container | Port | Notes |

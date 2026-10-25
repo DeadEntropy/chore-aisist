@@ -9,15 +9,18 @@ import json
 import os
 from datetime import date
 
+from pathlib import Path
+
+import pymysql
 import pytest
 
 from planner import db, seed
-from planner.config import REPO_ROOT, Settings
+from planner.config import Settings
 from planner.models import Completion
 
 pytestmark = pytest.mark.skipif("TEST_DB_PASSWORD" not in os.environ, reason="no test database")
 
-SEED = REPO_ROOT / "chores.json"
+SEED = Path(__file__).resolve().parents[1] / "chores.json"
 
 
 @pytest.fixture
@@ -28,7 +31,6 @@ def settings():
         db_name=os.environ.get("TEST_DB_NAME", "chores_test"),
         db_user=os.environ.get("TEST_DB_USER", "root"),
         db_password=os.environ["TEST_DB_PASSWORD"],
-        migrations_dir=REPO_ROOT / "migrations",
     )
 
 
@@ -41,12 +43,17 @@ def conn(settings):
             for row in cur.fetchall():
                 cur.execute(f"DROP TABLE `{next(iter(row.values()))}`")
             cur.execute("SET FOREIGN_KEY_CHECKS = 1")
-        db.migrate(c, settings.migrations_dir)
+        db.migrate(c)
         yield c
 
 
-def test_migrate_is_idempotent(conn, settings):
-    assert db.migrate(conn, settings.migrations_dir) == []
+def test_migrate_is_idempotent(conn):
+    assert db.migrate(conn) == []
+
+
+def test_migrate_refuses_empty_folder(conn, tmp_path):
+    with pytest.raises(ValueError):
+        db.migrate(conn, tmp_path)
 
 
 def test_import_seed(conn):
@@ -80,9 +87,9 @@ def test_update_and_needs(conn):
 
 def test_constraints_reject_bad_values(conn):
     seed.import_json(conn, SEED)
-    with pytest.raises(Exception):
+    with pytest.raises(pymysql.err.MySQLError):
         db.update_chore(conn, "weed-pool-deck", {"priority": 9})
-    with pytest.raises(Exception):
+    with pytest.raises(pymysql.err.MySQLError):
         db.set_needs(conn, "paint-wall", ["no-such-chore"])
 
 

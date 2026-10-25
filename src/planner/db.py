@@ -9,6 +9,8 @@ from pymysql.cursors import DictCursor
 from planner.config import Settings
 from planner.models import Chore, Completion, Person
 
+MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
 CHORE_COLUMNS = [
     "id", "name", "category", "type",
     "interval_min_days", "interval_target_days", "interval_max_days",
@@ -40,8 +42,11 @@ def connect(settings: Settings):
 
 # --- migrations -------------------------------------------------------------
 
-def migrate(conn, migrations_dir: Path) -> list[str]:
+def migrate(conn, migrations_dir: Path = MIGRATIONS_DIR) -> list[str]:
     """Apply migration files not yet recorded in schema_migrations, in name order."""
+    files = sorted(migrations_dir.glob("*.sql"))
+    if not files:
+        raise ValueError(f"No migration files found in {migrations_dir}")
     with conn.cursor() as cur:
         cur.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations ("
@@ -52,7 +57,7 @@ def migrate(conn, migrations_dir: Path) -> list[str]:
         done = {row["version"] for row in cur.fetchall()}
 
         applied = []
-        for path in sorted(migrations_dir.glob("*.sql")):
+        for path in files:
             if path.name in done:
                 continue
             for statement in _split_sql(path.read_text()):

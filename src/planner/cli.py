@@ -1,27 +1,27 @@
 """The `planner` command. Thin wrappers around the other modules."""
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
 import pymysql
 
 from planner import db, seed
-from planner.config import REPO_ROOT, load_settings
+from planner.config import load_settings
 from planner.models import Chore
 
-DEFAULT_SEED = Path(os.environ.get("SEED_PATH", REPO_ROOT / "chores.json"))
 NULLS = {"", "none", "null"}
+TRUE_WORDS = {"1", "true", "yes", "y"}
+FALSE_WORDS = {"0", "false", "no", "n"}
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = load_settings()
     try:
+        settings = load_settings()
         with db.connect(settings) as conn:
             return args.func(conn, args, settings) or 0
-    except (ValueError, pymysql.err.IntegrityError, pymysql.err.OperationalError) as exc:
+    except (ValueError, pymysql.err.MySQLError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -33,8 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("migrate", help="create or upgrade the database tables")
     p.set_defaults(func=cmd_migrate)
 
-    p = sub.add_parser("import", help="load chores.json (adds missing chores only)")
-    p.add_argument("path", nargs="?", type=Path, default=DEFAULT_SEED)
+    p = sub.add_parser("import", help="load a seed file such as chores.json (adds missing chores only)")
+    p.add_argument("path", type=Path)
     p.set_defaults(func=cmd_import)
 
     p = sub.add_parser("export", help="write the database out as JSON")
@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
 # --- commands ---------------------------------------------------------------
 
 def cmd_migrate(conn, args, settings):
-    applied = db.migrate(conn, settings.migrations_dir)
+    applied = db.migrate(conn)
     print("Applied: " + ", ".join(applied) if applied else "Database is up to date.")
 
 
@@ -137,7 +137,13 @@ def parse_fields(pairs: list[str]) -> dict:
         elif key == "needs":
             out["needs"] = [] if empty else [x.strip() for x in value.split(",")]
         elif key in ("outdoor", "active"):
-            out[key] = value.lower() in ("1", "true", "yes", "y")
+            flag = value.lower()
+            if flag in TRUE_WORDS:
+                out[key] = True
+            elif flag in FALSE_WORDS:
+                out[key] = False
+            else:
+                raise ValueError(f"{key} must be yes or no, got '{raw}'")
         elif key == "duration_h":
             out[key] = None if empty else float(value)
         elif key == "priority":

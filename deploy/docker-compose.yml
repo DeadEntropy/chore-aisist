@@ -24,7 +24,7 @@ services:
 
   # The app. Until the scheduler exists (phase 4) it runs one-off commands:
   #   docker compose run --rm chore-aisist migrate
-  #   docker compose run --rm chore-aisist import
+  #   docker compose run --rm chore-aisist import /app/chores.json
   chore-aisist:
     image: chore-aisist:0.1.0     # build from this repo: docker build -t chore-aisist:0.1.0 .
     container_name: chore-aisist

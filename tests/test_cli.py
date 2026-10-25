@@ -15,3 +15,9 @@ def test_parse_fields_rejects_unknown_and_bad_interval():
         parse_fields(["notes=hello"])
     with pytest.raises(ValueError):
         parse_fields(["interval=7,10"])
+
+
+def test_parse_fields_booleans():
+    assert parse_fields(["outdoor=no", "active=YES"]) == {"outdoor": False, "active": True}
+    with pytest.raises(ValueError):
+        parse_fields(["active=ture"])

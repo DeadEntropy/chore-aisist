@@ -1,7 +1,7 @@
 -- Initial schema: chore catalog, ordering, people, history, plans, run log.
 -- Statements are separated by semicolons at the end of a line.
 
-CREATE TABLE chore (
+CREATE TABLE IF NOT EXISTS chore (
   id                   VARCHAR(64)  PRIMARY KEY,
   name                 VARCHAR(255) NOT NULL,
   category             VARCHAR(16)  NOT NULL CHECK (category IN ('home', 'garden')),
@@ -20,7 +20,7 @@ CREATE TABLE chore (
   CHECK (interval_target_days IS NULL OR interval_target_days <= interval_max_days)
 );
 
-CREATE TABLE chore_need (
+CREATE TABLE IF NOT EXISTS chore_need (
   chore_id  VARCHAR(64) NOT NULL,
   needs_id  VARCHAR(64) NOT NULL,
   PRIMARY KEY (chore_id, needs_id),
@@ -29,13 +29,13 @@ CREATE TABLE chore_need (
   CHECK (chore_id <> needs_id)
 );
 
-CREATE TABLE person (
+CREATE TABLE IF NOT EXISTS person (
   id             VARCHAR(16) PRIMARY KEY,
   name           VARCHAR(64) NOT NULL,
   weekend_hours  DECIMAL(4,2) NOT NULL
 );
 
-CREATE TABLE completion (
+CREATE TABLE IF NOT EXISTS completion (
   id            INT AUTO_INCREMENT PRIMARY KEY,
   chore_id      VARCHAR(64) NOT NULL,
   person_id     VARCHAR(16) NULL,
@@ -48,7 +48,7 @@ CREATE TABLE completion (
   INDEX idx_completion_chore (chore_id, outcome, completed_on)
 );
 
-CREATE TABLE planned (
+CREATE TABLE IF NOT EXISTS planned (
   id          INT AUTO_INCREMENT PRIMARY KEY,
   chore_id    VARCHAR(64) NOT NULL,
   person_id   VARCHAR(16) NOT NULL,
@@ -59,7 +59,7 @@ CREATE TABLE planned (
   FOREIGN KEY (person_id) REFERENCES person(id)
 );
 
-CREATE TABLE run_log (
+CREATE TABLE IF NOT EXISTS run_log (
   id       INT AUTO_INCREMENT PRIMARY KEY,
   run_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   kind     VARCHAR(16) NOT NULL CHECK (kind IN ('weekly', 'daily', 'manual')),

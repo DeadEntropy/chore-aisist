@@ -152,7 +152,7 @@ CREATE TABLE run_log (
   → both caulking chores) and a job could need several purchases.
 - Unknown values (duration, priority, interval…) stay `NULL` until filled in; the planner skips chores it can't size yet
   and lists them in the brief as "needs details".
-- Schema changes are versioned migration scripts in the repo (`migrations/NNN_*.sql`), applied by `planner migrate`.
+- Schema changes are versioned migration scripts shipped inside the package (`src/planner/migrations/NNN_*.sql`), applied by `planner migrate`.
 
 ## 6. Planning algorithm
 
