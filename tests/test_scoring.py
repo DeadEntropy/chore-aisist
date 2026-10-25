@@ -73,6 +73,22 @@ def test_score_filters_and_orders():
         "blocked": "waiting for: buy-stuff", "vague": "needs details: duration_h"}
 
 
+def test_pending_need_keeps_job_eligible_and_lends_its_score():
+    chores = [one_off("buy", priority=2), one_off("job", priority=4, needs=["buy"]), one_off("other")]
+    eligible, excluded = score_chores(chores, {}, TODAY)
+    assert excluded == []
+    assert [s.chore.id for s in eligible] == ["buy", "job", "other"]     # buy inherits job's 2.0
+    assert [s.score for s in eligible] == [2.0, 2.0, 1.5]
+    assert eligible[1].waits_for == ["buy"]
+
+
+def test_job_waiting_for_an_ineligible_chore_is_excluded():
+    chores = [one_off("buy", duration_h=None), one_off("job", needs=["buy"])]
+    _, excluded = score_chores(chores, {}, TODAY)
+    assert dict((c.id, why) for c, why in excluded) == {
+        "buy": "needs details: duration_h", "job": "waiting for: buy"}
+
+
 def test_needs_met_once_done():
     eligible, _ = score_chores([one_off("job", needs=["buy"])], {"buy": ago(1)}, TODAY)
     assert [s.chore.id for s in eligible] == ["job"]

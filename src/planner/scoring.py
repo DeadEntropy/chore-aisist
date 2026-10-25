@@ -44,7 +44,12 @@ def score_chores(
     last_done: dict[str, date],
     today: date,
 ) -> tuple[list[Scored], list[tuple[Chore, str]]]:
-    """Return (eligible chores sorted by score, highest first; excluded chores with the reason)."""
+    """Return (eligible chores sorted by score, highest first; excluded chores with the reason).
+
+    A chore whose needs aren't done yet stays eligible if every pending need is itself eligible: fitting then
+    places it after them on the same weekend. Each pending need inherits the job's score if that is higher,
+    so a purchase is never ranked below the job it unlocks.
+    """
     eligible: list[Scored] = []
     excluded: list[tuple[Chore, str]] = []
     for chore in chores:
@@ -55,16 +60,30 @@ def score_chores(
         if missing := missing_details(chore):
             excluded.append((chore, "needs details: " + ", ".join(missing)))
             continue
-        if blocked := [n for n in chore.needs if n not in last_done]:
-            excluded.append((chore, "waiting for: " + ", ".join(blocked)))
-            continue
         if chore.type == "recurring":
             u = urgency_recurring(chore, last_done.get(chore.id), today)
             if u is None:
                 continue                                     # not due yet
         else:
             u = urgency_one_off(chore.created_on, today)
-        eligible.append(Scored(chore, round(u, 3), round(u * chore.priority, 3)))
+        pending = [n for n in chore.needs if n not in last_done]
+        eligible.append(Scored(chore, round(u, 3), round(u * chore.priority, 3), pending))
 
-    eligible.sort(key=lambda s: (-s.score, -s.chore.priority, s.chore.id))
+    # Drop chores waiting for something that can't be planned now (repeat: dropping one can strand another).
+    while True:
+        ids = {s.chore.id for s in eligible}
+        stuck = [s for s in eligible if any(n not in ids for n in s.waits_for)]
+        if not stuck:
+            break
+        for s in stuck:
+            eligible.remove(s)
+            excluded.append((s.chore, "waiting for: " + ", ".join(n for n in s.waits_for if n not in ids)))
+
+    by_id = {s.chore.id: s for s in eligible}
+    for s in sorted(eligible, key=lambda s: -s.score):
+        for n in s.waits_for:
+            by_id[n].score = max(by_id[n].score, s.score)
+
+    # Ties: chores others wait for go first.
+    eligible.sort(key=lambda s: (-s.score, len(s.waits_for), -s.chore.priority, s.chore.id))
     return eligible, excluded

@@ -2,7 +2,9 @@
 
 Greedy: take chores from highest score down and give each one the first free slot that fits,
 on the weekend day where that person (or both, for 'both' chores) has the most free time left.
-A person's chores never exceed their weekend budget (`weekend_hours`).
+A person's chores never exceed their weekend budget (`weekend_hours`). A chore waiting for another
+(e.g. a job and its purchase) is only placed after that one ends; chores that others wait for take the
+earliest slot instead, to leave room after them.
 """
 
 from datetime import date, datetime, time, timedelta
@@ -35,9 +37,15 @@ def plan_weekend(
     budget = {p.id: round(p.weekend_hours * 60) for p in people}
 
     items: list[PlannedItem] = []
+    placed_end: dict[str, datetime] = {}
+    waited_on = {n for s in scored for n in s.waits_for}
     unplanned = []
     for s in scored:
         duration = round(s.chore.duration_h * 60)
+        if missing := [n for n in s.waits_for if n not in placed_end]:
+            unplanned.append((s.chore, "needs " + ", ".join(missing) + " first, which didn't fit"))
+            continue
+        not_before = max((placed_end[n] for n in s.waits_for), default=None)
         groups = _candidate_groups(s.chore.assignee, people, budget)
         if not groups:
             unplanned.append((s.chore, f"unknown assignee '{s.chore.assignee}'"))
@@ -49,7 +57,7 @@ def plan_weekend(
             if any(budget[p] < duration for p in group):
                 continue
             over_budget = False
-            slot = _best_slot(group, days, free, duration)
+            slot = _best_slot(group, days, free, duration, not_before, first_free=s.chore.id in waited_on)
             if slot:
                 placed = (group, *slot)
                 break
@@ -64,6 +72,7 @@ def plan_weekend(
             free[(p, day)] = _subtract(free[(p, day)], span)
             budget[p] -= duration
         items.append(PlannedItem(s.chore, group, _at(day, span[0]), _at(day, span[1]), s.score))
+        placed_end[s.chore.id] = _at(day, span[1])
 
     items.sort(key=lambda i: (i.start, i.people))
     return Plan(saturday, items, unplanned)
@@ -78,16 +87,26 @@ def _candidate_groups(assignee: str, people: list[Person], budget: dict[str, int
     return [[assignee]] if assignee in ids else []
 
 
-def _best_slot(group, days, free, duration) -> tuple[date, int] | None:
-    """First slot long enough, on the day where the group has the most common free time."""
+def _best_slot(group, days, free, duration, not_before=None, first_free=False) -> tuple[date, int] | None:
+    """First slot long enough, on the day where the group has the most common free time
+    (or simply the earliest slot of the weekend, with `first_free`).
+
+    With `not_before`, the slot must start at or after that moment.
+    """
     options = []
     for i, day in enumerate(days):
+        earliest = 0
+        if not_before is not None:
+            if day < not_before.date():
+                continue
+            if day == not_before.date():
+                earliest = _minutes(not_before.time())
         common = free[(group[0], day)]
         for p in group[1:]:
             common = _intersect(common, free[(p, day)])
-        fitting = [start for start, end in common if end - start >= duration]
+        fitting = [max(start, earliest) for start, end in common if end - max(start, earliest) >= duration]
         if fitting:
-            total_free = sum(end - start for start, end in common)
+            total_free = 0 if first_free else sum(end - start for start, end in common)
             options.append((-total_free, i, day, fitting[0]))
     if not options:
         return None

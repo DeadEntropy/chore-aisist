@@ -50,7 +50,8 @@ class Busy:
 class Scored:
     chore: Chore
     urgency: float
-    score: float                       # urgency × priority
+    score: float                       # urgency × priority (purchases inherit the score of the job they unlock)
+    waits_for: list[str] = field(default_factory=list)   # needs not done yet; must be planned earlier this weekend
 
 
 @dataclass

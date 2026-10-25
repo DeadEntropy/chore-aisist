@@ -60,6 +60,23 @@ def test_chores_do_not_overlap_for_a_person():
     assert all(at(i.start.date(), "08:00") <= i.start and i.end <= at(i.start.date(), "18:00") for i in items)
 
 
+def test_job_goes_after_its_purchase_same_weekend():
+    buy, job = chore("buy", 1, "anna", 5), chore("job", 2, "nicolas", 5)
+    job.waits_for = ["buy"]
+    busy = [Busy("anna", at(SAT, "08:00"), at(SAT, "16:00"))]       # Anna can only shop late Saturday
+    items = {i.chore.id: i for i in plan_weekend([buy, job], PEOPLE, busy, SAT).items}
+    assert items["buy"].start == at(SAT, "16:00")
+    assert items["job"].start >= items["buy"].end
+
+
+def test_job_dropped_when_its_purchase_did_not_fit():
+    buy, job = chore("buy", 7, "anna", 5), chore("job", 1, "nicolas", 5)   # 7 h > Anna's 6 h budget
+    job.waits_for = ["buy"]
+    plan = plan_weekend([buy, job], PEOPLE, [], SAT)
+    assert plan.items == []
+    assert dict((c.id, why) for c, why in plan.unplanned)["job"] == "needs buy first, which didn't fit"
+
+
 def test_unknown_assignee_is_reported():
     plan = plan_weekend([chore("x", 1, "grandma")], PEOPLE, [], SAT)
     assert plan.unplanned[0][1] == "unknown assignee 'grandma'"

@@ -179,7 +179,10 @@ Decided for phase 1:
   are handled without division by zero.
 - **One-off chores** have no window: urgency starts at **0.5** when the chore is added and grows by **0.2 per week**
   waiting (`score = urgency × priority`), so a neglected one-off overtakes a fully-due recurring chore after ~2.5 weeks.
-- A chore is eligible only once everything in its `needs` is done (a purchase and its job land on different weekends).
+- `needs`: a job whose needs aren't done yet can still be planned if every pending need is planned **earlier the same
+  weekend** (buy Saturday morning, do the job that afternoon or Sunday). Pending needs inherit the job's score when
+  it's higher, and take the earliest free slot so the job has room after them. If the need doesn't fit, neither does
+  the job.
 - Chores missing duration, priority, assignee (or interval, for recurring) are not planned and are listed as
   "needs details".
 
