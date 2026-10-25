@@ -13,18 +13,18 @@
     "assignee": "nicolas | anna | either | both; null if unknown",
     "outdoor": "true if done outside; outdoor chores are weather-sensitive (rain moves them)",
     "needs": "Chore ids that must be done first (e.g. a 'Buy …' chore); empty list if none",
-    "people": "Who does chores; weekend_hours are placeholders until capacity planning"
+    "people": "Who does chores and how many hours of chores per weekend"
   },
   "people": [
     {
       "id": "nicolas",
       "name": "Nicolas",
-      "weekend_hours": 5
+      "weekend_hours": 6
     },
     {
       "id": "anna",
       "name": "Anna",
-      "weekend_hours": 4
+      "weekend_hours": 6
     }
   ],
   "chores": [
@@ -35,9 +35,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 1,
+      "priority": 2,
+      "assignee": "both",
       "outdoor": false,
       "needs": []
     },
@@ -48,9 +48,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 2,
+      "priority": 2,
+      "assignee": "both",
       "outdoor": false,
       "needs": [
         "buy-paint-greek-villa"
@@ -63,9 +63,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 0.5,
+      "priority": 3,
+      "assignee": "either",
       "outdoor": false,
       "needs": []
     },
@@ -89,9 +89,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 1,
+      "priority": 2,
+      "assignee": "nicolas",
       "outdoor": false,
       "needs": []
     },
@@ -102,9 +102,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 1,
+      "priority": 3,
+      "assignee": "nicolas",
       "outdoor": false,
       "needs": [
         "buy-sliding-door-handle"
@@ -130,9 +130,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "nicolas",
       "outdoor": false,
       "needs": []
     },
@@ -143,9 +143,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 1.5,
+      "priority": 3,
+      "assignee": "nicolas",
       "outdoor": false,
       "needs": []
     },
@@ -156,9 +156,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "nicolas",
       "outdoor": false,
       "needs": [
         "buy-kids-corridor-closet-door"
@@ -171,9 +171,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 1,
+      "priority": 3,
+      "assignee": "either",
       "outdoor": false,
       "needs": []
     },
@@ -184,9 +184,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 1,
+      "priority": 3,
+      "assignee": "nicolas",
       "outdoor": false,
       "needs": [
         "buy-caulk"
@@ -199,9 +199,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 0.5,
+      "priority": 3,
+      "assignee": "nicolas",
       "outdoor": false,
       "needs": [
         "buy-caulk"
@@ -214,9 +214,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 1,
+      "priority": 3,
+      "assignee": "nicolas",
       "outdoor": false,
       "needs": []
     },
@@ -240,22 +240,43 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 0.5,
+      "priority": 4,
+      "assignee": "nicolas",
       "outdoor": false,
       "needs": []
     },
     {
-      "id": "remulch-house",
-      "name": "Re-mulch all around the house",
+      "id": "remulch-house-front",
+      "name": "Re-mulch front of the house",
       "category": "garden",
       "type": "recurring",
       "status": "open",
-      "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "interval_days": {
+        "min": 300,
+        "target": 365,
+        "max": 450
+      },
+      "duration_h": 4,
+      "priority": 3,
+      "assignee": "both",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "remulch-house-back",
+      "name": "Re-mulch back of the house",
+      "category": "garden",
+      "type": "recurring",
+      "status": "open",
+      "interval_days": {
+        "min": 300,
+        "target": 365,
+        "max": 450
+      },
+      "duration_h": 4,
+      "priority": 3,
+      "assignee": "both",
       "outdoor": true,
       "needs": []
     },
@@ -278,10 +299,14 @@
       "category": "garden",
       "type": "recurring",
       "status": "done",
-      "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "interval_days": {
+        "min": 60,
+        "target": 90,
+        "max": 120
+      },
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "either",
       "outdoor": true,
       "needs": []
     },
@@ -292,9 +317,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 1,
+      "priority": 2,
+      "assignee": "nicolas",
       "outdoor": true,
       "needs": []
     },
@@ -305,9 +330,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "both",
       "outdoor": true,
       "needs": []
     },
@@ -317,10 +342,14 @@
       "category": "garden",
       "type": "recurring",
       "status": "done",
-      "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "interval_days": {
+        "min": 60,
+        "target": 90,
+        "max": 120
+      },
+      "duration_h": 1,
+      "priority": 3,
+      "assignee": "nicolas",
       "outdoor": true,
       "needs": []
     },
@@ -331,9 +360,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "both",
       "outdoor": false,
       "needs": []
     },
@@ -344,9 +373,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 3,
+      "priority": 3,
+      "assignee": "both",
       "outdoor": true,
       "needs": [
         "buy-waterfall-plants"
@@ -358,10 +387,14 @@
       "category": "garden",
       "type": "recurring",
       "status": "open",
-      "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "interval_days": {
+        "min": 60,
+        "target": 90,
+        "max": 120
+      },
+      "duration_h": 1,
+      "priority": 3,
+      "assignee": "either",
       "outdoor": true,
       "needs": []
     },
@@ -371,10 +404,14 @@
       "category": "garden",
       "type": "recurring",
       "status": "open",
-      "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "interval_days": {
+        "min": 60,
+        "target": 90,
+        "max": 120
+      },
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "either",
       "outdoor": true,
       "needs": []
     },
@@ -385,9 +422,9 @@
       "type": "one_off",
       "status": "open",
       "interval_days": null,
-      "duration_h": null,
-      "priority": null,
-      "assignee": null,
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "both",
       "outdoor": true,
       "needs": []
     }
