@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
   "source": "Imported from DeadEntropy/ToDoList lists/home.md and lists/garden.md on 2026-10-25",
+  "note": "Seed data. Loaded once with `planner import`; after that the database is the source of truth. Anything that needs buying is its own 'Buy …' chore, listed in the job's 'needs'.",
   "fields": {
     "id": "Stable kebab-case identifier",
     "name": "Short imperative description",
@@ -11,12 +11,36 @@
     "duration_h": "Estimated hours; null if unknown",
     "priority": "1 (nice to have) … 5 (costly to miss); null if unknown",
     "assignee": "nicolas | anna | either | both; null if unknown",
-    "outdoor": "true if done outside",
-    "weather_sensitive": "true if rain should move it",
-    "shopping": "Stores/materials needed before it can be done",
-    "notes": "Free text"
+    "outdoor": "true if done outside; outdoor chores are weather-sensitive (rain moves them)",
+    "needs": "Chore ids that must be done first (e.g. a 'Buy …' chore); empty list if none",
+    "people": "Who does chores; weekend_hours are placeholders until capacity planning"
   },
+  "people": [
+    {
+      "id": "nicolas",
+      "name": "Nicolas",
+      "weekend_hours": 5
+    },
+    {
+      "id": "anna",
+      "name": "Anna",
+      "weekend_hours": 4
+    }
+  ],
   "chores": [
+    {
+      "id": "buy-paint-greek-villa",
+      "name": "Buy Greek Villa paint (Home Depot)",
+      "category": "home",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": null,
+      "priority": null,
+      "assignee": null,
+      "outdoor": false,
+      "needs": []
+    },
     {
       "id": "paint-wall",
       "name": "Paint wall (Greek Villa)",
@@ -28,13 +52,13 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": ["Home Depot"],
-      "notes": "Greek Villa is the paint colour"
+      "needs": [
+        "buy-paint-greek-villa"
+      ]
     },
     {
       "id": "buy-wall-hangers",
-      "name": "Buy wall hangers",
+      "name": "Buy wall hangers (Home Depot or Walmart)",
       "category": "home",
       "type": "one_off",
       "status": "open",
@@ -43,9 +67,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": ["Home Depot", "Walmart"],
-      "notes": null
+      "needs": []
     },
     {
       "id": "repair-office-window-sill",
@@ -58,9 +80,20 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": ["Home Depot"],
-      "notes": "White paint"
+      "needs": []
+    },
+    {
+      "id": "buy-sliding-door-handle",
+      "name": "Buy sliding door handle (Home Depot or Amazon)",
+      "category": "home",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": null,
+      "priority": null,
+      "assignee": null,
+      "outdoor": false,
+      "needs": []
     },
     {
       "id": "fix-sliding-door-handle",
@@ -73,9 +106,9 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": ["Home Depot", "Amazon"],
-      "notes": null
+      "needs": [
+        "buy-sliding-door-handle"
+      ]
     },
     {
       "id": "fix-extension-ac",
@@ -88,9 +121,7 @@
       "priority": 5,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": "Was marked urgent"
+      "needs": []
     },
     {
       "id": "adjust-playroom-closet-door",
@@ -103,13 +134,11 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
-      "id": "install-kids-corridor-closet-door",
-      "name": "Buy and install closet door in kids corridor",
+      "id": "buy-kids-corridor-closet-door",
+      "name": "Measure and buy closet door for kids corridor (Home Depot)",
       "category": "home",
       "type": "one_off",
       "status": "open",
@@ -118,9 +147,35 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": ["Home Depot"],
-      "notes": "Measure first"
+      "needs": []
+    },
+    {
+      "id": "install-kids-corridor-closet-door",
+      "name": "Install closet door in kids corridor",
+      "category": "home",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": null,
+      "priority": null,
+      "assignee": null,
+      "outdoor": false,
+      "needs": [
+        "buy-kids-corridor-closet-door"
+      ]
+    },
+    {
+      "id": "buy-caulk",
+      "name": "Buy caulk (Home Depot)",
+      "category": "home",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": null,
+      "priority": null,
+      "assignee": null,
+      "outdoor": false,
+      "needs": []
     },
     {
       "id": "caulk-kids-bathroom-tap",
@@ -133,9 +188,9 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": ["Home Depot"],
-      "notes": "Caulk"
+      "needs": [
+        "buy-caulk"
+      ]
     },
     {
       "id": "caulk-breakfast-room-window",
@@ -148,9 +203,9 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": ["Home Depot"],
-      "notes": "Caulk"
+      "needs": [
+        "buy-caulk"
+      ]
     },
     {
       "id": "adjust-anna-office-closet-door",
@@ -163,9 +218,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
       "id": "unclog-kids-bathtub",
@@ -178,9 +231,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": ["Home Depot"],
-      "notes": null
+      "needs": []
     },
     {
       "id": "screw-green-chairs",
@@ -193,9 +244,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": false,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
       "id": "remulch-house",
@@ -208,9 +257,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": true,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
       "id": "remove-dead-tree",
@@ -223,9 +270,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
       "id": "trim-around-pool",
@@ -238,9 +283,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
       "id": "cut-avocado-tree-top",
@@ -253,9 +296,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
       "id": "remove-dead-bush-pool",
@@ -268,9 +309,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
       "id": "trim-hedge-mendel",
@@ -283,9 +322,20 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": null
+      "needs": []
+    },
+    {
+      "id": "buy-waterfall-plants",
+      "name": "Buy plants for pool waterfall",
+      "category": "garden",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": null,
+      "priority": null,
+      "assignee": null,
+      "outdoor": false,
+      "needs": []
     },
     {
       "id": "replant-pool-waterfall",
@@ -298,9 +348,9 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": true,
-      "shopping": ["Plants"],
-      "notes": null
+      "needs": [
+        "buy-waterfall-plants"
+      ]
     },
     {
       "id": "weed-front-yard",
@@ -313,9 +363,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": true,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
       "id": "weed-pool-deck",
@@ -328,9 +376,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": true,
-      "shopping": [],
-      "notes": null
+      "needs": []
     },
     {
       "id": "remove-travellers-palms",
@@ -343,9 +389,7 @@
       "priority": null,
       "assignee": null,
       "outdoor": true,
-      "weather_sensitive": false,
-      "shopping": [],
-      "notes": null
+      "needs": []
     }
   ]
 }
