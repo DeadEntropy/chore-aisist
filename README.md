@@ -25,14 +25,17 @@ Later phases add `scoring.py`, `fitting.py`, `calendars.py`, `jobs.py` (see DESI
 
 ## Development
 
-Uses [uv](https://docs.astral.sh/uv/) for the virtual environment.
+Uses [uv](https://docs.astral.sh/uv/). Exact dependency versions are pinned in `uv.lock`; the Docker image installs
+from the same file.
 
 ```bash
-uv venv .venv --python 3.12
-uv pip install --python .venv -e '.[dev]'
+uv sync                                    # creates .venv with the locked versions (+ pytest)
 cp .env.example .env && chmod 600 .env     # fill in passwords
 .venv/bin/planner --help
 ```
+
+Changing dependencies: edit `pyproject.toml`, run `uv lock`, commit both files.
+Upgrading: `uv lock --upgrade`, review the `uv.lock` diff in a PR.
 
 ### Tests
 
