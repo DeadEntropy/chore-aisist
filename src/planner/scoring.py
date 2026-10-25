@@ -39,6 +39,16 @@ def missing_details(chore: Chore) -> list[str]:
     return missing
 
 
+def _need_met(need_id: str, chore: Chore, last_done: dict[str, date]) -> bool:
+    """A need counts once done; for a recurring chore, it must be done again since the chore was last done
+    (e.g. a fresh mulch order before each yearly re-mulch)."""
+    if need_id not in last_done:
+        return False
+    if chore.type == "recurring" and chore.id in last_done:
+        return last_done[need_id] > last_done[chore.id]
+    return True
+
+
 def score_chores(
     chores: list[Chore],
     last_done: dict[str, date],
@@ -66,7 +76,7 @@ def score_chores(
                 continue                                     # not due yet
         else:
             u = urgency_one_off(chore.created_on, today)
-        pending = [n for n in chore.needs if n not in last_done]
+        pending = [n for n in chore.needs if not _need_met(n, chore, last_done)]
         eligible.append(Scored(chore, round(u, 3), round(u * chore.priority, 3), pending))
 
     # Drop chores waiting for something that can't be planned now (repeat: dropping one can strand another).

@@ -89,6 +89,17 @@ def test_job_waiting_for_an_ineligible_chore_is_excluded():
         "buy": "needs details: duration_h", "job": "waiting for: buy"}
 
 
+def test_recurring_job_needs_a_fresh_need_each_round():
+    mulch = recurring("mulch", lo=300, mid=365, hi=450, needs=["order"])
+    order = recurring("order", lo=300, mid=365, hi=450)
+    last_year = {"mulch": ago(400), "order": ago(401)}
+    eligible, _ = score_chores([mulch, order], last_year, TODAY)
+    assert {s.chore.id: s.waits_for for s in eligible}["mulch"] == ["order"]   # last year's order doesn't count
+    fresh = {"mulch": ago(400), "order": ago(3)}
+    eligible, _ = score_chores([mulch], fresh, TODAY)
+    assert eligible[0].waits_for == []
+
+
 def test_needs_met_once_done():
     eligible, _ = score_chores([one_off("job", needs=["buy"])], {"buy": ago(1)}, TODAY)
     assert [s.chore.id for s in eligible] == ["job"]

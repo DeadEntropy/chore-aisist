@@ -1,5 +1,5 @@
 {
-  "source": "Imported from DeadEntropy/ToDoList lists/home.md and lists/garden.md on 2026-10-25",
+  "source": "Imported from DeadEntropy/ToDoList (master @ cf081f3) lists/home.json and lists/garden.json; details collected 2026-10-25",
   "note": "Seed data. Loaded once with `planner import`; after that the database is the source of truth. Anything that needs buying is its own 'Buy …' chore, listed in the job's 'needs'.",
   "fields": {
     "id": "Stable kebab-case identifier",
@@ -247,6 +247,45 @@
       "needs": []
     },
     {
+      "id": "order-window-cleaner",
+      "name": "Order window cleaner",
+      "category": "home",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": 0.5,
+      "priority": 4,
+      "assignee": "anna",
+      "outdoor": false,
+      "needs": []
+    },
+    {
+      "id": "investigate-kitchen-ceiling-patch",
+      "name": "Investigate water patch on kitchen ceiling",
+      "category": "home",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "both",
+      "outdoor": false,
+      "needs": []
+    },
+    {
+      "id": "tidy-kids-room",
+      "name": "Tidy up kids room and discard step-shelf",
+      "category": "home",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "anna",
+      "outdoor": false,
+      "needs": []
+    },
+    {
       "id": "remulch-house-front",
       "name": "Re-mulch front of the house",
       "category": "garden",
@@ -261,7 +300,9 @@
       "priority": 3,
       "assignee": "both",
       "outdoor": true,
-      "needs": []
+      "needs": [
+        "order-mulch"
+      ]
     },
     {
       "id": "remulch-house-back",
@@ -278,7 +319,9 @@
       "priority": 3,
       "assignee": "both",
       "outdoor": true,
-      "needs": []
+      "needs": [
+        "order-mulch"
+      ]
     },
     {
       "id": "remove-dead-tree",
@@ -425,6 +468,201 @@
       "duration_h": 2,
       "priority": 3,
       "assignee": "both",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "order-mulch",
+      "name": "Order mulch (70 bags)",
+      "category": "garden",
+      "type": "recurring",
+      "status": "open",
+      "interval_days": {
+        "min": 300,
+        "target": 365,
+        "max": 450
+      },
+      "duration_h": 1,
+      "priority": 3,
+      "assignee": "either",
+      "outdoor": false,
+      "needs": []
+    },
+    {
+      "id": "trim-bushes",
+      "name": "Trim bushes",
+      "category": "garden",
+      "type": "recurring",
+      "status": "open",
+      "interval_days": {
+        "min": 60,
+        "target": 90,
+        "max": 120
+      },
+      "duration_h": 3,
+      "priority": 3,
+      "assignee": "either",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "trim-palms-mailbox",
+      "name": "Trim palm trees next to mailbox",
+      "category": "garden",
+      "type": "recurring",
+      "status": "open",
+      "interval_days": {
+        "min": 120,
+        "target": 180,
+        "max": 240
+      },
+      "duration_h": 1,
+      "priority": 3,
+      "assignee": "nicolas",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "trim-palms-pool",
+      "name": "Trim palm trees next to pool",
+      "category": "garden",
+      "type": "recurring",
+      "status": "open",
+      "interval_days": {
+        "min": 90,
+        "target": 120,
+        "max": 180
+      },
+      "duration_h": 3,
+      "priority": 3,
+      "assignee": "nicolas",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "spray-weed-killer",
+      "name": "Spray weed killer",
+      "category": "garden",
+      "type": "recurring",
+      "status": "open",
+      "interval_days": {
+        "min": 60,
+        "target": 90,
+        "max": 120
+      },
+      "duration_h": 1,
+      "priority": 3,
+      "assignee": "either",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "distribute-lawn-granules",
+      "name": "Distribute lawn granules",
+      "category": "garden",
+      "type": "recurring",
+      "status": "open",
+      "interval_days": {
+        "min": 300,
+        "target": 365,
+        "max": 450
+      },
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "either",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "repair-side-walkway",
+      "name": "Repair side walkway (large project, to break down)",
+      "category": "garden",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": null,
+      "priority": 2,
+      "assignee": "both",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "buy-pool-decoration-part",
+      "name": "Buy part for pool decoration fixture",
+      "category": "garden",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": 1,
+      "priority": 2,
+      "assignee": "nicolas",
+      "outdoor": false,
+      "needs": []
+    },
+    {
+      "id": "fix-pool-decoration-fixture",
+      "name": "Fix pool decoration fixture",
+      "category": "garden",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": 0.5,
+      "priority": 2,
+      "assignee": "nicolas",
+      "outdoor": true,
+      "needs": [
+        "buy-pool-decoration-part"
+      ]
+    },
+    {
+      "id": "fix-pool-lights",
+      "name": "Fix pool lights",
+      "category": "garden",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": 3,
+      "priority": 2,
+      "assignee": "nicolas",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "revive-anna-plant",
+      "name": "Revive Anna's almost-dead plant",
+      "category": "garden",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": 0.5,
+      "priority": 4,
+      "assignee": "anna",
+      "outdoor": false,
+      "needs": []
+    },
+    {
+      "id": "plant-lime-tree",
+      "name": "Plant lime tree",
+      "category": "garden",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": 2,
+      "priority": 3,
+      "assignee": "nicolas",
+      "outdoor": true,
+      "needs": []
+    },
+    {
+      "id": "improve-aloe-vera-section",
+      "name": "Improve aloe vera section (to be defined)",
+      "category": "garden",
+      "type": "one_off",
+      "status": "open",
+      "interval_days": null,
+      "duration_h": null,
+      "priority": 2,
+      "assignee": "either",
       "outdoor": true,
       "needs": []
     }
