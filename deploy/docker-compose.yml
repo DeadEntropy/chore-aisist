@@ -1,0 +1,41 @@
+# Template for the deployment folder (<deploy-dir>/chore-aisist/docker-compose.yml)
+# Copy this folder there, fill in .env, then: docker compose up -d chore-aisist-db
+
+services:
+  chore-aisist-db:
+    image: mariadb:11
+    container_name: chore-aisist-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: chores
+      MARIADB_USER: chore_aisist
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      TZ: America/New_York
+    volumes:
+      - ./db:/var/lib/mysql
+    ports:
+      - "127.0.0.1:3307:3306"   # this machine only; for running the code from the dev checkout
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # The app. Until the scheduler exists (phase 4) it runs one-off commands:
+  #   docker compose run --rm chore-aisist migrate
+  #   docker compose run --rm chore-aisist import
+  chore-aisist:
+    image: chore-aisist:0.1.0     # build from this repo: docker build -t chore-aisist:0.1.0 .
+    container_name: chore-aisist
+    profiles: ["app"]             # not started by "docker compose up" yet
+    depends_on:
+      chore-aisist-db:
+        condition: service_healthy
+    environment:
+      DB_HOST: chore-aisist-db
+      DB_PORT: 3306
+      DB_NAME: chores
+      DB_USER: chore_aisist
+      DB_PASSWORD: ${DB_PASSWORD}
+      TZ: America/New_York

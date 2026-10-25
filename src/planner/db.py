@@ -1,0 +1,172 @@
+"""All database access. The only module that contains SQL."""
+
+from contextlib import contextmanager
+from pathlib import Path
+
+import pymysql
+from pymysql.cursors import DictCursor
+
+from planner.config import Settings
+from planner.models import Chore, Completion, Person
+
+CHORE_COLUMNS = [
+    "id", "name", "category", "type",
+    "interval_min_days", "interval_target_days", "interval_max_days",
+    "duration_h", "priority", "assignee", "outdoor", "active",
+]
+
+
+@contextmanager
+def connect(settings: Settings):
+    """Open a connection; commit if the block succeeds, roll back if it raises."""
+    conn = pymysql.connect(
+        host=settings.db_host,
+        port=settings.db_port,
+        user=settings.db_user,
+        password=settings.db_password,
+        database=settings.db_name,
+        cursorclass=DictCursor,
+        autocommit=False,
+    )
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# --- migrations -------------------------------------------------------------
+
+def migrate(conn, migrations_dir: Path) -> list[str]:
+    """Apply migration files not yet recorded in schema_migrations, in name order."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations ("
+            " version VARCHAR(255) PRIMARY KEY,"
+            " applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        cur.execute("SELECT version FROM schema_migrations")
+        done = {row["version"] for row in cur.fetchall()}
+
+        applied = []
+        for path in sorted(migrations_dir.glob("*.sql")):
+            if path.name in done:
+                continue
+            for statement in _split_sql(path.read_text()):
+                cur.execute(statement)
+            cur.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (path.name,))
+            conn.commit()
+            applied.append(path.name)
+    return applied
+
+
+def _split_sql(text: str) -> list[str]:
+    lines = [line for line in text.splitlines() if not line.strip().startswith("--")]
+    return [s.strip() for s in "\n".join(lines).split(";\n") if s.strip().rstrip(";")]
+
+
+# --- chores -----------------------------------------------------------------
+
+def get_chores(conn, include_inactive: bool = False) -> list[Chore]:
+    with conn.cursor() as cur:
+        where = "" if include_inactive else "WHERE active"
+        cur.execute(f"SELECT {', '.join(CHORE_COLUMNS)} FROM chore {where} ORDER BY category, id")
+        rows = cur.fetchall()
+        cur.execute("SELECT chore_id, needs_id FROM chore_need ORDER BY needs_id")
+        needs: dict[str, list[str]] = {}
+        for row in cur.fetchall():
+            needs.setdefault(row["chore_id"], []).append(row["needs_id"])
+    return [_row_to_chore(row, needs.get(row["id"], [])) for row in rows]
+
+
+def get_chore(conn, chore_id: str) -> Chore | None:
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {', '.join(CHORE_COLUMNS)} FROM chore WHERE id = %s", (chore_id,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        cur.execute("SELECT needs_id FROM chore_need WHERE chore_id = %s ORDER BY needs_id", (chore_id,))
+        needs = [r["needs_id"] for r in cur.fetchall()]
+    return _row_to_chore(row, needs)
+
+
+def add_chore(conn, chore: Chore) -> None:
+    """Insert the chore row only; call set_needs() once every referenced chore exists."""
+    values = [getattr(chore, col) for col in CHORE_COLUMNS]
+    with conn.cursor() as cur:
+        cur.execute(
+            f"INSERT INTO chore ({', '.join(CHORE_COLUMNS)})"
+            f" VALUES ({', '.join(['%s'] * len(CHORE_COLUMNS))})",
+            values,
+        )
+
+
+def update_chore(conn, chore_id: str, changes: dict) -> None:
+    unknown = set(changes) - set(CHORE_COLUMNS[1:])
+    if unknown:
+        raise ValueError(f"Unknown chore field(s): {', '.join(sorted(unknown))}")
+    if not changes:
+        return
+    assignments = ", ".join(f"{col} = %s" for col in changes)
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE chore SET {assignments} WHERE id = %s", [*changes.values(), chore_id])
+        if cur.rowcount == 0 and get_chore(conn, chore_id) is None:
+            raise ValueError(f"No chore with id '{chore_id}'")
+
+
+def set_needs(conn, chore_id: str, needs: list[str]) -> None:
+    """Replace the list of chores that must be done before this one."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM chore_need WHERE chore_id = %s", (chore_id,))
+        cur.executemany(
+            "INSERT INTO chore_need (chore_id, needs_id) VALUES (%s, %s)",
+            [(chore_id, n) for n in needs],
+        )
+
+
+def _row_to_chore(row: dict, needs: list[str]) -> Chore:
+    return Chore(
+        **{**row, "duration_h": float(row["duration_h"]) if row["duration_h"] is not None else None,
+           "outdoor": bool(row["outdoor"]), "active": bool(row["active"])},
+        needs=needs,
+    )
+
+
+# --- people -----------------------------------------------------------------
+
+def get_people(conn) -> list[Person]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, name, weekend_hours FROM person ORDER BY id")
+        return [Person(r["id"], r["name"], float(r["weekend_hours"])) for r in cur.fetchall()]
+
+
+def add_person(conn, person: Person) -> bool:
+    """Insert if missing. Returns True if a row was added."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT IGNORE INTO person (id, name, weekend_hours) VALUES (%s, %s, %s)",
+            (person.id, person.name, person.weekend_hours),
+        )
+        return cur.rowcount == 1
+
+
+# --- history ----------------------------------------------------------------
+
+def record_completion(conn, completion: Completion) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO completion (chore_id, person_id, completed_on, outcome, source)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (completion.chore_id, completion.person_id, completion.completed_on,
+             completion.outcome, completion.source),
+        )
+
+
+def done_chore_ids(conn) -> set[str]:
+    """Chores with at least one 'done' completion."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT chore_id FROM completion WHERE outcome = 'done'")
+        return {r["chore_id"] for r in cur.fetchall()}

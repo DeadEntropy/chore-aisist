@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chore-aisist"
+version = "0.1.0"
+description = "Household chore planner: plans weekend chores into a Nextcloud calendar"
+requires-python = ">=3.12"
+dependencies = [
+  "pymysql>=1.1",
+  "caldav>=1.4",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+planner = "planner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

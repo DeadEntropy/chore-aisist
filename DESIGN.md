@@ -70,7 +70,7 @@ Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, read-only)
 | **Nextcloud calendars (read)** | Nicolas, Family, School, Anna: kids' events, gym, travel → blocked time. |
 | **"Chores" calendar (write)** | Planned chores as events; shared read-only with Nicolas and Anna. |
 | **Claude Code** | The human interface: turns "I've done the lawn" or "hedges take 3 hours" into CLI calls; can also query the database directly for questions ("when did we last fertilize?"). |
-| **Weather API** | Moves weather-sensitive outdoor work to the drier day. |
+| **Weather API** | Moves outdoor work to the drier day. |
 | **Claude API** | Turns the plan into a readable brief; later, parses natural-language edits. |
 | **Notifier** | Delivers the brief (Home Assistant push, email, or Nextcloud Talk). |
 
@@ -93,14 +93,17 @@ CREATE TABLE chore (
   duration_h         DECIMAL(4,2) NULL,
   priority           TINYINT NULL,                      -- 1 nice to have … 5 costly to miss
   assignee           VARCHAR(16) NULL,                  -- nicolas | anna | either | both
-  outdoor            BOOLEAN NOT NULL DEFAULT FALSE,
-  weather_sensitive  BOOLEAN NOT NULL DEFAULT FALSE,
-  seasons            JSON NULL,                         -- e.g. ["mar","apr","may"]; NULL = all year
-  shopping           JSON NULL,                         -- e.g. ["Home Depot"]
-  notes              TEXT NULL,
+  outdoor            BOOLEAN NOT NULL DEFAULT FALSE,    -- outdoor = weather-sensitive
   active             BOOLEAN NOT NULL DEFAULT TRUE,     -- FALSE = retired, kept for history
   created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Ordering: a chore can only be planned once everything it needs is done.
+CREATE TABLE chore_need (
+  chore_id   VARCHAR(64) NOT NULL REFERENCES chore(id),   -- e.g. 'caulk-kids-bathroom-tap'
+  needs_id   VARCHAR(64) NOT NULL REFERENCES chore(id),   -- e.g. 'buy-caulk'
+  PRIMARY KEY (chore_id, needs_id)
 );
 
 -- Who does chores and how much time they have.
@@ -118,7 +121,6 @@ CREATE TABLE completion (
   completed_on  DATE NOT NULL,
   outcome       VARCHAR(16) NOT NULL,                   -- done | skipped
   source        VARCHAR(16) NOT NULL,                   -- claude | manual | import
-  note          TEXT NULL,                              -- "only did the front half"
   recorded_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -143,6 +145,11 @@ CREATE TABLE run_log (
 - `last_done(chore)` = latest `completion.completed_on` with `outcome = done`. A chore with no history is treated as due.
 - A `one_off` chore is finished once it has a `done` completion; it is never planned again. No separate status column
   to keep in sync. Items already ticked in the ToDoList import get a completion with `source = import`.
+- `outdoor` doubles as "weather-sensitive": every outdoor chore can be moved by rain.
+- Purchases are not a field: anything that needs buying is its own `Buy …` chore, and the job lists it in
+  `needs` (JSON) / `chore_need` (database). A chore is only eligible once every chore it needs has a `done`
+  completion. A list rather than a single value, because one purchase can unblock several jobs (`buy-caulk`
+  → both caulking chores) and a job could need several purchases.
 - Unknown values (duration, priority, interval…) stay `NULL` until filled in; the planner skips chores it can't size yet
   and lists them in the brief as "needs details".
 - Schema changes are versioned migration scripts in the repo (`migrations/NNN_*.sql`), applied by `planner migrate`.
@@ -151,7 +158,7 @@ CREATE TABLE run_log (
 
 ### 6.1 Urgency score
 
-For each in-season chore, with `d` = days since last done:
+For each eligible chore, with `d` = days since last done:
 
 ```
 if d < min:            urgency = 0                       # not yet eligible
@@ -179,9 +186,9 @@ Fully blocked weekends (travel) have zero capacity.
 
 ### 6.4 Fitting
 
-1. Sort eligible chores by `score` descending.
+1. Drop chores whose `needs` aren't all done yet, then sort eligible chores by `score` descending.
 2. For each chore, assign it to the eligible person (per `assignee`) with the most remaining capacity on a suitable day.
-3. Weather-sensitive chores go to the day with the better forecast; if both days are bad, they stay in the plan but are flagged "weather permitting".
+3. Outdoor chores go to the day with the better forecast; if both days are bad, they stay in the plan but are flagged "weather permitting".
 4. Skip a chore if no one has enough remaining capacity; it will score higher next week.
 5. Mark the lowest-scored scheduled chores as "skippable if rushed" in the brief.
 
@@ -243,7 +250,7 @@ no host cron.
 | Folder | Contents | In git |
 |---|---|---|
 | `<dev-dir>/chore-aisist` (this repo) | Code, tests, `Dockerfile`, migrations, `chores.json` seed, docs | `DeadEntropy/chore-aisist` |
-| `<deploy-dir>/chore-aisist/` | Deployment, same pattern as the other services: `docker-compose.yml`, `README.md`, `.env`, `.env.example`, `config.yaml`, `db/` (MariaDB data files) | smarthome repo (`.env` and `db/` gitignored) |
+| `<deploy-dir>/chore-aisist/` | Deployment, same pattern as the other services: `docker-compose.yml`, `README.md`, `.env`, `.env.example`, `db/` (MariaDB data files) | smarthome repo (`.env` and `db/` gitignored) |
 
 ### Compose stack (`<deploy-dir>/chore-aisist/docker-compose.yml`)
 
@@ -258,9 +265,33 @@ no host cron.
 
 ### Config & secrets
 
-- `.env` (gitignored, mode 600): DB password, `<app-user>` app password, Claude API key, notifier credentials.
-- `config.yaml`: calendar names, schedule, weather location, notifier choice.
+- Environment variables only, from `.env` (gitignored, mode 600): DB connection, `<app-user>` app password,
+  calendar names, Claude API key, notifier settings. No separate config file.
 - `<app-user>` is a dedicated app account, never a personal one.
+
+### Python
+
+- Dependencies: `pymysql` (database), `caldav` (calendars; brings `icalendar` and `recurring-ical-events`),
+  `python-dotenv`. Later: the Anthropic SDK. CLI uses the standard-library `argparse`; no ORM.
+- Development uses a `uv`-managed virtual environment in `.venv` (see README).
+
+### Modules (`src/planner/`)
+
+| Module | Does | Talks to |
+|---|---|---|
+| `config.py` | Settings from environment variables | — |
+| `models.py` | Data shapes: `Chore`, `Person`, `Completion` (+ `PlannedItem`, `Busy` later) | — |
+| `db.py` | All SQL, including `migrate()` | MariaDB |
+| `seed.py` | Import / export `chores.json` | via `db.py` |
+| `cli.py` | The `planner` command | the above |
+| `scoring.py` | Which chores are due and how urgent (pure) | — |
+| `fitting.py` | Who does what on which day within capacity (pure) | — |
+| `calendars.py` | Read busy time, sync the Chores calendar | Nextcloud |
+| `jobs.py` | `weekly_run()` and the long-running `serve()` | the above |
+| `weather.py`, `brief.py`, `notify.py` | Phases 4–5 | external APIs |
+
+Only `db.py` contains SQL and only `calendars.py` speaks CalDAV; `scoring.py` and `fitting.py` take plain data and
+are tested without a database or network.
 
 ### Development
 
@@ -318,3 +349,4 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - **Calendar**: dedicated Chores calendar owned by the app user (`<app-user>`); events only; family read-only.
 - **Feedback loop**: completions reported through Claude Code → CLI; no phone task apps.
 - **Dev environment**: none separate for now; use the real database and calendar.
+- **Seasonality**: removed from the chore fields for now; add back if a chore really only applies part of the year.
