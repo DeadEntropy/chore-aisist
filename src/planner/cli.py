@@ -2,11 +2,12 @@
 
 import argparse
 import sys
+from datetime import date
 from pathlib import Path
 
 import pymysql
 
-from planner import db, seed
+from planner import db, jobs, seed
 from planner.config import load_settings
 from planner.models import Chore
 
@@ -57,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p.add_argument("fields", nargs="+", metavar="key=value")
     p.set_defaults(func=cmd_chore_set)
+
+    p = sub.add_parser("plan", help="plan the coming weekend")
+    p.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
+    p.add_argument("--date", type=date.fromisoformat, help="plan the weekend on/after this date (YYYY-MM-DD)")
+    p.add_argument("--weeks", type=int, default=1, help="dry run: also plan the following N-1 weekends")
+    p.set_defaults(func=cmd_plan)
     return parser
 
 
@@ -115,6 +122,37 @@ def cmd_chore_set(conn, args, settings):
         db.set_needs(conn, args.id, fields.pop("needs"))
     db.update_chore(conn, args.id, fields)
     print(f"Updated {args.id}")
+
+
+def cmd_plan(conn, args, settings):
+    if not args.dry_run:
+        raise ValueError("Writing plans to the calendar comes with calendar integration; use --dry-run")
+    saturday = jobs.next_saturday(args.date or date.today())
+    for week, (plan, excluded) in enumerate(jobs.dry_run(conn, saturday, args.weeks)):
+        print_plan(plan, excluded if week == 0 else [])
+
+
+def print_plan(plan, excluded) -> None:
+    print(f"=== Weekend of {plan.saturday:%a %d %b %Y}")
+    hours: dict[str, float] = {}
+    day = None
+    for item in plan.items:
+        if item.start.date() != day:
+            day = item.start.date()
+            print(f"  {day:%A}")
+        who = " & ".join(p.capitalize() for p in item.people)
+        print(f"    {item.start:%H:%M}-{item.end:%H:%M}  {item.chore.name}  ({who})  score {item.score:g}")
+        for p in item.people:
+            hours[p] = hours.get(p, 0) + item.chore.duration_h
+    if not plan.items:
+        print("  nothing planned")
+    if hours:
+        print("  Hours: " + ", ".join(f"{p.capitalize()} {h:g}" for p, h in sorted(hours.items())))
+    if plan.unplanned:
+        print("  Didn't fit: " + "; ".join(f"{c.id} ({why})" for c, why in plan.unplanned))
+    for chore, why in excluded:
+        print(f"  Not eligible: {chore.id} ({why})")
+    print()
 
 
 # --- helpers ----------------------------------------------------------------

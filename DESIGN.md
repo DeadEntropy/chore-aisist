@@ -173,6 +173,16 @@ score = urgency * priority
 
 Before scoring, find the **next available weekend** after this one (skipping weekends blocked by travel). If a chore would pass `max` before that next available weekend, bump its score as if it were overdue now. This front-loads work before a trip and naturally produces a catch-up plan afterwards.
 
+Decided for phase 1:
+
+- Never-done recurring chores count as fully due (urgency 1.0). Degenerate windows (`min = target` or `target = max`)
+  are handled without division by zero.
+- **One-off chores** have no window: urgency starts at **0.5** when the chore is added and grows by **0.2 per week**
+  waiting (`score = urgency × priority`), so a neglected one-off overtakes a fully-due recurring chore after ~2.5 weeks.
+- A chore is eligible only once everything in its `needs` is done (a purchase and its job land on different weekends).
+- Chores missing duration, priority, assignee (or interval, for recurring) are not planned and are listed as
+  "needs details".
+
 ### 6.3 Capacity
 
 For each person and each weekend day:
@@ -184,6 +194,13 @@ available_h = weekend_hours share for that day
 
 Fully blocked weekends (travel) have zero capacity.
 
+Implemented as **time slots** rather than subtracting event hours from the budget:
+
+- Chores can be placed between **08:00 and 18:00** on Saturday and Sunday.
+- Each person's busy events are removed from that window. Calendar → person: Nicolas → Nicolas, Anna → Anna,
+  Family and School → both.
+- A person's chores never exceed their `weekend_hours` budget for the weekend (6 h each to start).
+
 ### 6.4 Fitting
 
 1. Drop chores whose `needs` aren't all done yet, then sort eligible chores by `score` descending.
@@ -193,6 +210,15 @@ Fully blocked weekends (travel) have zero capacity.
 5. Mark the lowest-scored scheduled chores as "skippable if rushed" in the brief.
 
 Greedy fitting is good enough for a handful of chores per weekend; revisit only if results look wrong.
+
+Placement details (phase 1): `either` goes to the person with the most budget left; `both` needs a slot where both
+are free and uses both budgets. Each chore goes in the first long-enough free slot on the day where that person (or
+pair) has the most free time left, which spreads work over the two days. Chores appear in the Chores calendar as
+**timed events** (e.g. `Sat 09:00–10:30 🧹 Mow the lawn (Nicolas)`).
+
+`planner plan --dry-run [--date D] [--weeks N]` prints the plan without writing anything; with `--weeks N` it assumes
+each planned chore is done on its day and plans the following weekends too, to show how the backlog is worked off.
+Until calendar integration (phase 2), everyone is treated as free all weekend.
 
 ## 7. CalDAV integration
 
