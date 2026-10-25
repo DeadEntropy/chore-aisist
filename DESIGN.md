@@ -15,10 +15,13 @@ The Household Planner is a self-hosted assistant that:
 ## 2. Guiding principles
 
 1. **Deterministic core, AI at the edges.** Scoring and scheduling are plain, testable code. The LLM only writes the weekly brief and (later) parses natural-language input.
-2. **Reuse Nextcloud for everything except the planner.** Storage of events, sync to phones, sharing with family, and check-off all come from CalDAV. The only custom component is the planner.
-3. **Windows, not dates.** Chores have a tolerance window ("every 3–5 weeks"), not a fixed due date.
-4. **Count from actual completion.** The next due date is computed from when a chore was *actually done*, so a slip doesn't compound.
-5. **Capacity is a budget.** Each person has a realistic number of hours per weekend; the planner never schedules beyond it.
+2. **Reuse Nextcloud for display.** Storage of events, sync to phones and sharing with family all come from CalDAV. The only custom component is the planner.
+3. **Single writer.** Only the planner (its own Nextcloud user, `<app-user>`) writes to the Chores calendar. The family sees it read-only.
+4. **Claude Code is the interface.** Completions, skips and catalog edits are reported by talking to Claude Code on the home server ("I've mowed the lawn"); no phone task app is needed.
+5. **Data lives apart from code.** Chores and their history live in a dedicated database container on the home server, not in git. The app connects to it when it needs to; rebuilding or replacing the app never touches the data.
+6. **Windows, not dates.** Chores have a tolerance window ("every 3–5 weeks"), not a fixed due date.
+7. **Count from actual completion.** The next due date is computed from when a chore was *actually done*, so a slip doesn't compound.
+8. **Capacity is a budget.** Each person has a realistic number of hours per weekend; the planner never schedules beyond it.
 
 ## 3. Context & constraints
 
@@ -26,115 +29,123 @@ The Household Planner is a self-hosted assistant that:
 - One week per month away for travel → roughly one lost weekend per month.
 - Regular gym sessions (fixed blocks).
 - South Florida climate: year-round growing, rainy season → weather matters for outdoor work.
-- Infrastructure: home server (Intel N100) running Docker and Nextcloud; Nextcloud hosts the family calendars.
+- Infrastructure: home server (Intel N100) running Docker; every service is a compose stack in its own folder on the NAS share (so backed up). Nextcloud hosts the family calendars.
 
 ## 4. Architecture
 
 ```
-┌──────────────────────── N100 home server ────────────────────────┐
-│                                                                  │
-│  ┌──────────────────┐   CalDAV    ┌───────────────────────────┐  │
-│  │  planner (Docker)│◄───────────►│ Nextcloud                 │  │
-│  │  - scheduler     │  read/write │  - family calendars (read)│  │
-│  │  - scoring       │             │  - "Chores" calendar      │  │
-│  │  - SQLite        │             │  - "Chores" task list     │  │
-│  └───────┬──────────┘             │  - chores.yaml (Files)    │  │
-│          │                        └───────────────────────────┘  │
-└──────────┼───────────────────────────────────────────────────────┘
-           │ HTTPS (outbound only)
-           ├──► Weather API (forecast for the weekend)
-           ├──► Claude API (weekly brief text)
-           └──► Notification channel (Home Assistant / email / Nextcloud Talk)
+┌──────────────────────────── N100 home server ────────────────────────────────┐
+│                                                                              │
+│  Claude Code ── docker exec chore-aisist planner done mow-lawn ──┐           │
+│  (Nicolas / Anna)                                                ▼           │
+│  ┌──────────────────────┐  SQL   ┌────────────────────────────────────────┐  │
+│  │ chore-aisist-db      │◄──────►│ chore-aisist (app container, Python)   │  │
+│  │ MariaDB              │        │ - CLI: done / skip / plan / chore …    │  │
+│  │ - chores             │        │ - scheduler (weekly run)               │  │
+│  │ - completion history │        │ - scoring + fitting                    │  │
+│  │ - plans, run log     │        └───────┬───────────────────┬────────────┘  │
+│  └──────────────────────┘                │ CalDAV as         │               │
+│                                          │ <app-user>        │               │
+│                          read ┌──────────▼───────────────────▼───────────┐   │
+│                               │ Nextcloud                                │   │
+│                               │ - Nicolas, Family, School, Anna (read)   │   │
+│                               │ - "Chores" calendar (write)              │   │
+│                               └──────────────────────────────────────────┘   │
+└──────────────────────────────────────────┬───────────────────────────────────┘
+                                           │ HTTPS (outbound only)
+                                           ├──► Weather API (forecast for the weekend)
+                                           ├──► Claude API (weekly brief text)
+                                           └──► Notification channel (Home Assistant / email / Nextcloud Talk)
 
-Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, tick tasks)
+Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, read-only)
 ```
 
 ### Components
 
 | Component | Role |
 |---|---|
-| **Planner service** | Small .NET worker (or Python) in one Docker container. Wakes on schedule, plans, writes, sleeps. |
-| **SQLite** | Chore state and completion log, on a mounted volume (covered by existing backups). |
-| **Chore catalog** | `chores.yaml` in a Nextcloud folder; editable from anywhere; reloaded each run. |
-| **Nextcloud calendars (read)** | Kids' events, gym, travel → blocked time. |
-| **"Chores" calendar (write)** | Planned chores as events, shared with spouse. |
-| **"Chores" task list (read/write)** | Planned chores as VTODOs; ticking them off is the feedback loop. |
+| **`chore-aisist` (app)** | Python, one long-running container. Runs the weekly job on an internal schedule and exposes a CLI (`planner …`) that Claude Code calls with `docker exec`. Holds no data of its own. |
+| **`chore-aisist-db` (MariaDB)** | Dedicated database container: the chore catalog, completion history, plans and run log. Data files on the NAS share (backed up). Separate from Nextcloud's database so each can be upgraded/restored independently. |
+| **App Nextcloud user (`<app-user>`)** | The app's identity. Owns the Chores calendar; read-only access to the family calendars. Details in `CALENDAR.md`. |
+| **Nextcloud calendars (read)** | Nicolas, Family, School, Anna: kids' events, gym, travel → blocked time. |
+| **"Chores" calendar (write)** | Planned chores as events; shared read-only with Nicolas and Anna. |
+| **Claude Code** | The human interface: turns "I've done the lawn" or "hedges take 3 hours" into CLI calls; can also query the database directly for questions ("when did we last fertilize?"). |
 | **Weather API** | Moves weather-sensitive outdoor work to the drier day. |
 | **Claude API** | Turns the plan into a readable brief; later, parses natural-language edits. |
 | **Notifier** | Delivers the brief (Home Assistant push, email, or Nextcloud Talk). |
 
 ## 5. Data model
 
-### 5.1 Chore catalog (`chores.yaml`)
-
-```yaml
-people:
-  - id: nicolas
-    weekend_hours: 5
-  - id: spouse
-    weekend_hours: 4
-
-chores:
-  - id: mow-lawn
-    name: Mow the lawn
-    interval_days: { min: 7, target: 10, max: 14 }
-    duration_h: 1.5
-    priority: 3            # 1 = nice to have … 5 = costly to miss
-    assignee: nicolas      # nicolas | spouse | either | both
-    outdoor: true
-    weather_sensitive: true
-    seasons: [all]         # or e.g. [mar, apr, may]
-
-  - id: fertilize-lawn
-    name: Fertilize the lawn
-    interval_days: { min: 60, target: 75, max: 90 }
-    duration_h: 1
-    priority: 4
-    assignee: either
-    outdoor: true
-    weather_sensitive: true
-    seasons: [mar, apr, may, oct, nov]
-
-  - id: trim-hedges
-    name: Trim the hedges
-    interval_days: { min: 28, target: 42, max: 60 }
-    duration_h: 2
-    priority: 2
-    assignee: nicolas
-    outdoor: true
-    weather_sensitive: false
-    seasons: [all]
-```
-
-### 5.2 Database (SQLite)
+Everything lives in the `chore-aisist-db` MariaDB database. `chores.json` in this repo is only the **seed**: it is
+imported once (`planner import chores.json`) and after that the database is the source of truth.
+`planner export` writes the current catalog back out as JSON for a readable snapshot.
 
 ```sql
-CREATE TABLE completion (
-  id           INTEGER PRIMARY KEY,
-  chore_id     TEXT NOT NULL,
-  completed_at TEXT NOT NULL,      -- ISO 8601
-  outcome      TEXT NOT NULL,      -- done | skipped
-  source       TEXT NOT NULL       -- caldav | manual
+-- The chore catalog: what needs doing and how often.
+CREATE TABLE chore (
+  id                 VARCHAR(64)  PRIMARY KEY,          -- e.g. 'weed-front-yard'
+  name               VARCHAR(255) NOT NULL,
+  category           VARCHAR(32)  NOT NULL,             -- home | garden
+  type               VARCHAR(16)  NOT NULL,             -- recurring | one_off
+  interval_min_days  INT NULL,                          -- recurring only
+  interval_target_days INT NULL,
+  interval_max_days  INT NULL,
+  duration_h         DECIMAL(4,2) NULL,
+  priority           TINYINT NULL,                      -- 1 nice to have … 5 costly to miss
+  assignee           VARCHAR(16) NULL,                  -- nicolas | anna | either | both
+  outdoor            BOOLEAN NOT NULL DEFAULT FALSE,
+  weather_sensitive  BOOLEAN NOT NULL DEFAULT FALSE,
+  seasons            JSON NULL,                         -- e.g. ["mar","apr","may"]; NULL = all year
+  shopping           JSON NULL,                         -- e.g. ["Home Depot"]
+  notes              TEXT NULL,
+  active             BOOLEAN NOT NULL DEFAULT TRUE,     -- FALSE = retired, kept for history
+  created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+-- Who does chores and how much time they have.
+CREATE TABLE person (
+  id              VARCHAR(32) PRIMARY KEY,              -- nicolas | anna
+  name            VARCHAR(64) NOT NULL,
+  weekend_hours   DECIMAL(4,2) NOT NULL
+);
+
+-- History: every time a chore was done or skipped.
+CREATE TABLE completion (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  chore_id      VARCHAR(64) NOT NULL REFERENCES chore(id),
+  person_id     VARCHAR(32) NULL REFERENCES person(id),
+  completed_on  DATE NOT NULL,
+  outcome       VARCHAR(16) NOT NULL,                   -- done | skipped
+  source        VARCHAR(16) NOT NULL,                   -- claude | manual | import
+  note          TEXT NULL,                              -- "only did the front half"
+  recorded_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- What the planner put on the calendar.
 CREATE TABLE planned (
-  id           INTEGER PRIMARY KEY,
-  chore_id     TEXT NOT NULL,
-  person_id    TEXT NOT NULL,
-  plan_date    TEXT NOT NULL,      -- the day it is scheduled
-  caldav_uid   TEXT NOT NULL UNIQUE,
-  status       TEXT NOT NULL       -- open | done | skipped | expired
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  chore_id    VARCHAR(64) NOT NULL REFERENCES chore(id),
+  person_id   VARCHAR(32) NOT NULL REFERENCES person(id),
+  plan_date   DATE NOT NULL,
+  caldav_uid  VARCHAR(255) NOT NULL UNIQUE,
+  status      VARCHAR(16) NOT NULL                      -- open | done | skipped | expired
 );
 
 CREATE TABLE run_log (
-  id           INTEGER PRIMARY KEY,
-  run_at       TEXT NOT NULL,
-  kind         TEXT NOT NULL,      -- weekly | daily
-  summary      TEXT
+  id       INT AUTO_INCREMENT PRIMARY KEY,
+  run_at   DATETIME NOT NULL,
+  kind     VARCHAR(16) NOT NULL,                        -- weekly | daily | manual
+  summary  TEXT NULL
 );
 ```
 
-`last_done(chore)` = latest `completion.completed_at` with `outcome = done`. A chore with no history is treated as due.
+- `last_done(chore)` = latest `completion.completed_on` with `outcome = done`. A chore with no history is treated as due.
+- A `one_off` chore is finished once it has a `done` completion; it is never planned again. No separate status column
+  to keep in sync. Items already ticked in the ToDoList import get a completion with `source = import`.
+- Unknown values (duration, priority, interval…) stay `NULL` until filled in; the planner skips chores it can't size yet
+  and lists them in the brief as "needs details".
+- Schema changes are versioned migration scripts in the repo (`migrations/NNN_*.sql`), applied by `planner migrate`.
 
 ## 6. Planning algorithm
 
@@ -178,33 +189,95 @@ Greedy fitting is good enough for a handful of chores per weekend; revisit only 
 
 ## 7. CalDAV integration
 
-- **Read**: query each configured family calendar for events in the planning horizon (this weekend + look-ahead). Any event overlapping a weekend day reduces capacity; events tagged/categorized as travel (or on a dedicated "Travel" calendar) block the whole weekend.
-- **Write events**: one VEVENT per planned chore in the "Chores" calendar, title `🧹 Mow the lawn (Nicolas)`.
-- **Write tasks**: one VTODO per planned chore in the "Chores" task list, with a deterministic UID: `chore-{chore_id}-{plan_date}@household-planner`.
-- **Read back completions**: on each run, fetch the planner's VTODOs:
-  - `STATUS:COMPLETED` → insert `completion` with `COMPLETED` timestamp, outcome `done`.
-  - `STATUS:CANCELLED` → outcome `skipped` (does not reset the interval).
-  - still open after its weekend → mark `expired`; the chore simply rescores next run.
-- Clients: Apple Calendar/Reminders on iOS, DAVx5 + Tasks.org on Android, Nextcloud web UI.
+All access is as the app's Nextcloud user (`<app-user>`) with an app password (see `CALENDAR.md` for URLs, shares and secrets).
 
-## 8. Runtime
+- **Read**: query the shared family calendars (Nicolas, Family, School, Anna) for events in the planning horizon
+  (this weekend + look-ahead), expanding recurring events. Any event overlapping a weekend day reduces capacity;
+  events tagged/categorized as travel (or on a dedicated "Travel" calendar) block the whole weekend.
+- **Write**: one VEVENT per planned chore in the Chores calendar, title `🧹 Mow the lawn (Nicolas)`,
+  with a deterministic UID: `chore-{chore_id}-{plan_date}@household-planner`.
+  Events only — no VTODOs.
+- **Single writer**: Nicolas and Anna have read-only access. Each run reconciles the Chores calendar against the
+  `planned` table, so the calendar is always exactly what the planner decided.
+- **Clients**: any CalDAV calendar app (iOS Calendar, DAVx5 + any Android calendar, Nextcloud web UI) — view only.
+
+## 7b. Reporting completions (Claude Code)
+
+The feedback loop is conversational. On the home server, Nicolas or Anna tells Claude Code what happened:
+
+> "I mowed the lawn and weeded the pool deck this morning. Skipped the hedges."
+
+Claude Code maps that to planner CLI calls inside the running container:
+
+```bash
+docker exec chore-aisist planner done mow-lawn --date 2026-10-31
+docker exec chore-aisist planner done weed-pool-deck --date 2026-10-31
+docker exec chore-aisist planner skip trim-hedge-mendel
+```
+
+A `/chores` Claude Code command file on the home server (like the existing `/calendar` command) documents this
+vocabulary for Claude Code.
+
+- `done` inserts a `completion` row (`outcome = done`, `source = claude`), marks the `planned` row `done`, and
+  updates the calendar event (e.g. prefix `✅`).
+- `skip` records `outcome = skipped` (does not reset the interval) and marks the planned row `skipped`.
+- Planned chores never reported by the end of their weekend become `expired` and simply rescore next run.
+- Catalog edits go through the CLI too ("hedges take closer to 3 hours" → `planner chore set trim-hedge-mendel
+  duration_h=3`; "add: clean the gutters every 6 months" → `planner chore add …`), then `planner plan` refreshes
+  the current weekend.
+- For read-only questions, Claude Code may query the database directly
+  (`docker exec chore-aisist-db mariadb … -e "SELECT …"`); writes always go through the CLI so the rules are enforced.
+
+## 8. Runtime & deployment
 
 | Schedule | Job |
 |---|---|
-| Thursday 20:00 | Weekly run: sync completions → score → fit → write events/tasks → send brief |
-| Daily 07:00 | Light run: sync completions; optionally send a short "today" note on weekends |
+| Thursday 20:00 | Weekly run: expire unreported items → score → fit → write events → send brief |
+| Daily 07:00 | Optional: send a short "today" note on weekends |
 
-- Packaged as a single Docker image; `docker-compose` service alongside Nextcloud.
-- Config via environment variables / mounted `config.yaml`: CalDAV URL, app password, calendar names, weather location, API keys, notifier settings.
-- Secrets: Nextcloud **app password** (not the main password); Claude API key in a `.env` file excluded from git.
-- Idempotent runs: re-running the weekly job replaces that weekend's planned items (same UIDs) rather than duplicating them.
+The schedule runs **inside** the app container (so `docker exec` always has a running container to talk to);
+no host cron.
+
+### Two folders
+
+| Folder | Contents | In git |
+|---|---|---|
+| `<dev-dir>/chore-aisist` (this repo) | Code, tests, `Dockerfile`, migrations, `chores.json` seed, docs | `DeadEntropy/chore-aisist` |
+| `<deploy-dir>/chore-aisist/` | Deployment, same pattern as the other services: `docker-compose.yml`, `README.md`, `.env`, `.env.example`, `config.yaml`, `db/` (MariaDB data files) | smarthome repo (`.env` and `db/` gitignored) |
+
+### Compose stack (`<deploy-dir>/chore-aisist/docker-compose.yml`)
+
+- `chore-aisist-db` — `mariadb` image, data in `./db`, on an internal network shared only with the app.
+  Port `127.0.0.1:3307` published to the host only, so code run from the dev folder can connect during development.
+- `chore-aisist` — image `chore-aisist:<version>`, built from this repo (`docker build -t chore-aisist:0.1.0 .`);
+  later possibly published from GitHub Actions to GHCR. No ports exposed.
+  - `TZ=America/New_York`
+  - `extra_hosts: <nextcloud-host>:<server-ip>` (the name doesn't resolve on the server itself)
+  - mounts the homelab CA certificate read-only so CalDAV over HTTPS is trusted
+  - reaches Nextcloud through NPM (`https://<nextcloud-host>`), not Nextcloud's internal network
+
+### Config & secrets
+
+- `.env` (gitignored, mode 600): DB password, `<app-user>` app password, Claude API key, notifier credentials.
+- `config.yaml`: calendar names, schedule, weather location, notifier choice.
+- `<app-user>` is a dedicated app account, never a personal one.
+
+### Development
+
+No separate dev environment for now: there is no precious data yet, so development uses the real database and the
+real Chores calendar. Code is run from the dev checkout (Python venv) against `127.0.0.1:3307`, or as the
+container. Revisit once the planner is live.
+
+### Idempotency
+
+Re-running the weekly job replaces that weekend's planned items (same UIDs) rather than duplicating them.
 
 ## 9. The weekly brief
 
 The planner produces structured output (JSON); the Claude API turns it into a short message, e.g.:
 
 > **This weekend**
-> Saturday: party 2–4pm. Morning: mow the lawn (Nicolas), weed front beds (spouse).
+> Saturday: party 2–4pm. Morning: mow the lawn (Nicolas), weed front beds (Anna).
 > Sunday: fertilize the lawn — dry morning forecast, do it before 11.
 > Skippable if rushed: trim the hedges.
 > Heads-up: travel week starts the 26th, so hedges are moved up to next weekend.
@@ -215,23 +288,33 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 
 | Phase | Deliverable | Done when |
 |---|---|---|
-| 1 | Catalog loader, SQLite schema, scoring + fitting, CLI that prints a plan from a seeded catalog | Plans for sample weekends look sensible; unit tests on scoring/edge cases |
+| 0 | MariaDB container + schema/migrations; `planner import` of `chores.json`; `planner chore list/add/set` | The 22 chores are in the database and editable through Claude Code |
+| 1 | Scoring + fitting; `planner plan --dry-run` prints a plan | Plans for sample weekends look sensible; unit tests on scoring/edge cases |
 | 2 | CalDAV read of family calendars; capacity + travel look-ahead | A real travel week produces front-loading and catch-up |
-| 3 | CalDAV write of events + VTODOs; completion read-back | Ticking a task on a phone changes next week's plan |
-| 4 | Docker image, scheduler, notifier, Claude brief | Brief arrives Thursday evening without manual steps |
+| 3 | CalDAV write of events; `done`/`skip` CLI | Telling Claude Code "I mowed the lawn" changes next week's plan |
+| 4 | App Docker image in the compose stack, internal scheduler, notifier, Claude brief | Brief arrives Thursday evening without manual steps |
 | 5 | Weather integration, natural-language catalog edits, polish | — |
 
 ## 11. Testing
 
 - **Unit**: scoring at window boundaries, seasonality, overdue growth, look-ahead across a blocked weekend, capacity never exceeded, assignee rules.
 - **Simulation**: replay 12 months of synthetic weeks (with travel weeks and random skips) and check that no chore stays overdue for long and that weekend load stays within capacity.
-- **Integration**: CalDAV round-trip against a test calendar on the Nextcloud instance.
+- **Unit tests** run without a database or network (scoring and fitting are pure functions).
+- **Integration**: database round-trip against a throwaway MariaDB container; CalDAV round-trip against the Chores calendar.
 
 ## 12. Open decisions
 
-- Language: .NET (C#) or Python.
 - Notification channel: Home Assistant push, email, or Nextcloud Talk.
 - Weekends only, or daily guidance as well?
 - How travel is marked in the calendar (dedicated calendar vs. category/keyword).
 - Whether hired help (e.g. a lawn service) should be modeled as a third "person" with its own schedule.
 - Per-day capacity split (e.g. Saturday lighter when there are kids' events).
+- How `one_off` chores are scored (they have no interval window — e.g. fixed urgency from priority, growing with age).
+
+## 13. Decisions made
+
+- **Language**: Python (mature CalDAV / recurring-event libraries; small image).
+- **Storage**: dedicated MariaDB container (`chore-aisist-db`), separate from code and from Nextcloud's database.
+- **Calendar**: dedicated Chores calendar owned by the app user (`<app-user>`); events only; family read-only.
+- **Feedback loop**: completions reported through Claude Code → CLI; no phone task apps.
+- **Dev environment**: none separate for now; use the real database and calendar.
