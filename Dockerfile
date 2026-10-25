@@ -14,7 +14,7 @@ RUN uv sync --frozen --no-dev --no-install-project --no-build
 
 # Then the app itself.
 COPY src ./src
-RUN uv sync --frozen --no-dev --no-editable
+RUN uv sync --frozen --no-dev --no-editable --no-build
 
 # --- runtime stage: just Python, the environment and the seed file ------------
 FROM python:3.12-slim
