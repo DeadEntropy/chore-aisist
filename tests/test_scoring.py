@@ -43,6 +43,23 @@ def test_recurring_never_done_is_fully_due():
     assert urgency_recurring(recurring(), None, TODAY) == 1.0
 
 
+def test_never_done_recurring_keeps_growing():
+    added = ago(0)
+    chore = recurring("weed", lo=60, mid=90, hi=120, created_on=added)
+    week0, _ = score_chores([chore], {}, TODAY)
+    later, _ = score_chores([chore], {}, TODAY + timedelta(weeks=6))
+    assert week0[0].urgency == 1.0
+    assert later[0].urgency == pytest.approx(1.0 + 42 / 60)
+
+
+@pytest.mark.parametrize("lo, mid, hi", [(7, None, None), (7, 10, None), (None, None, 14)])
+def test_partial_interval_needs_details(lo, mid, hi):
+    chore = recurring("half", lo=lo, mid=mid, hi=hi)
+    eligible, excluded = score_chores([chore], {"half": ago(30)}, TODAY)
+    assert eligible == []
+    assert excluded[0][1] == "needs details: interval"
+
+
 def test_degenerate_windows_do_not_divide_by_zero():
     assert urgency_recurring(recurring(lo=7, mid=7, hi=14), ago(7), TODAY) == 0.5
     assert urgency_recurring(recurring(lo=7, mid=14, hi=14), ago(14), TODAY) == 0.5
@@ -133,6 +150,14 @@ def test_circular_needs_are_excluded():
     assert [s.chore.id for s in eligible] == ["ok"]
     assert dict((c.id, why) for c, why in excluded) == {
         "a": "circular needs: b", "b": "circular needs: a", "c": "waiting for: a"}
+
+
+def test_job_is_not_pushed_behind_unrelated_chores_on_a_tie():
+    # order (3.0, inherits) → mulch (3.0) must stay together, ahead of an unrelated 3.0 chore with a later id
+    chores = [recurring("mulch", needs=["order"], created_on=TODAY), recurring("order", created_on=TODAY),
+              recurring("zzz-unrelated", created_on=TODAY)]
+    eligible, _ = score_chores(chores, {}, TODAY)
+    assert [s.chore.id for s in eligible] == ["order", "mulch", "zzz-unrelated"]
 
 
 def test_needs_met_once_done():

@@ -1,6 +1,6 @@
 """Which chores are due, and how urgent. Pure logic: no database, no network."""
 
-from datetime import date
+from datetime import date, timedelta
 
 from planner.models import Chore, Scored
 
@@ -12,7 +12,7 @@ def urgency_recurring(chore: Chore, last_done: date | None, today: date) -> floa
     """Urgency from the interval window; None if not due yet (before `min`).
 
     0 at min → 0.5 at target → 1.0 at max, then keeps growing while overdue.
-    A chore that has never been done counts as fully due (1.0).
+    A chore that has never been done counts as fully due (1.0); see `score_chores` for how it keeps growing.
     """
     if last_done is None:
         return 1.0
@@ -34,7 +34,8 @@ def urgency_one_off(waiting_since: date | None, today: date) -> float:
 
 def missing_details(chore: Chore) -> list[str]:
     missing = [f for f in ("duration_h", "priority", "assignee") if getattr(chore, f) is None]
-    if chore.type == "recurring" and chore.interval_min_days is None:
+    if chore.type == "recurring" and None in (
+            chore.interval_min_days, chore.interval_target_days, chore.interval_max_days):
         missing.append("interval")
     return missing
 
@@ -73,7 +74,12 @@ def score_chores(
             excluded.append((chore, "needs details: " + ", ".join(missing)))
             continue
         if chore.type == "recurring":
-            u = urgency_recurring(chore, last_done.get(chore.id), today)
+            last = last_done.get(chore.id)
+            if last is None and chore.created_on is not None:
+                # Never done: as if last done `max` days before it was added, so it starts fully due (1.0)
+                # and keeps growing like any overdue chore.
+                last = chore.created_on - timedelta(days=chore.interval_max_days)
+            u = urgency_recurring(chore, last, today)
             if u is None:
                 continue                                     # not due yet
         else:
@@ -107,24 +113,21 @@ def score_chores(
                     by_id[n].score = s.score
                     changed = True
 
-    # Ties: prerequisites first, by depth in their chain (C before B before A for A → B → C).
-    depth = _depths(by_id)
-    eligible.sort(key=lambda s: (-s.score, depth[s.chore.id], -s.chore.priority, s.chore.id))
-    return eligible, excluded
+    # Highest score first; each chore comes right after the needs it waits for. Needs score at least as high
+    # as their jobs, so the result stays sorted by score without pushing jobs behind unrelated chores.
+    ordered: list[Scored] = []
+    seen: set[str] = set()
 
+    def emit(s: Scored) -> None:
+        if s.chore.id not in seen:
+            seen.add(s.chore.id)
+            for n in s.waits_for:
+                emit(by_id[n])
+            ordered.append(s)
 
-def _depths(by_id: dict[str, Scored]) -> dict[str, int]:
-    """Length of the longest chain of pending needs below each chore (0 = waits for nothing). Assumes no cycles."""
-    depth: dict[str, int] = {}
-
-    def visit(chore_id: str) -> int:
-        if chore_id not in depth:
-            depth[chore_id] = 1 + max((visit(n) for n in by_id[chore_id].waits_for), default=-1)
-        return depth[chore_id]
-
-    for chore_id in by_id:
-        visit(chore_id)
-    return depth
+    for s in sorted(eligible, key=lambda s: (-s.score, -s.chore.priority, s.chore.id)):
+        emit(s)
+    return ordered, excluded
 
 
 def _in_cycles(eligible: list[Scored]) -> list[Scored]:

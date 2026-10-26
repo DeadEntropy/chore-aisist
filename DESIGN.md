@@ -177,13 +177,14 @@ Before scoring, find the **next available weekend** after this one (skipping wee
 
 Decided for phase 1:
 
-- Never-done recurring chores count as fully due (urgency 1.0). Degenerate windows (`min = target` or `target = max`)
-  are handled without division by zero.
+- Never-done recurring chores count as if last done `max` days before they were added: fully due (urgency 1.0) at
+  first, then growing like any overdue chore, so they can't be overtaken by one-offs forever.
+- Degenerate windows (`min = target` or `target = max`) are handled without division by zero; an incomplete interval counts as "needs details".
 - **One-off chores** have no window: urgency starts at **0.5** when the chore is added and grows by **0.2 per week**
   waiting (`score = urgency × priority`), so a neglected one-off overtakes a fully-due recurring chore after ~2.5 weeks.
 - `needs`: a job whose needs aren't done yet can still be planned if every pending need is planned **earlier the same
   weekend** (buy Saturday morning, do the job that afternoon or Sunday). Pending needs inherit the job's score when
-  it's higher (all the way down a chain), sort before the chores waiting on them (by depth in the chain), and take
+  it's higher (all the way down a chain), come right before the chores waiting on them in the ordering, and take
   the earliest free slot so the job has room after them. Circular needs are excluded with a reason. If the need doesn't fit, neither does
   the job.
   When a **recurring** job needs another **recurring** chore, the need only counts if it was done *since the job was
@@ -212,7 +213,8 @@ Implemented as **time slots** rather than subtracting event hours from the budge
 
 ### 6.4 Fitting
 
-1. Drop chores whose `needs` aren't all done yet, then sort eligible chores by `score` descending.
+1. Sort eligible chores by `score` descending, each one right after any pending needs it waits for (see §6.1:
+   a job whose needs aren't done is still eligible if they can be planned earlier the same weekend).
 2. For each chore, assign it to the eligible person (per `assignee`) with the most remaining capacity on a suitable day.
 3. Outdoor chores go to the day with the better forecast; if both days are bad, they stay in the plan but are flagged "weather permitting".
 4. Skip a chore if no one has enough remaining capacity; it will score higher next week.
@@ -377,7 +379,6 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - How travel is marked in the calendar (dedicated calendar vs. category/keyword).
 - Whether hired help (e.g. a lawn service) should be modeled as a third "person" with its own schedule.
 - Per-day capacity split (e.g. Saturday lighter when there are kids' events).
-- How `one_off` chores are scored (they have no interval window — e.g. fixed urgency from priority, growing with age).
 
 ## 13. Decisions made
 
