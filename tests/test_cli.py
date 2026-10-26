@@ -31,3 +31,17 @@ def test_plan_rejects_nonpositive_weeks(weeks):
 
 def test_plan_accepts_weeks():
     assert build_parser().parse_args(["plan", "--dry-run", "--weeks", "3"]).weeks == 3
+
+
+def test_blocked_weekend_still_lists_exclusions(capsys):
+    from datetime import date
+
+    from planner.cli import print_plan
+    from planner.jobs import WeekendResult
+    from planner.models import Chore, Plan
+
+    walkway = Chore(id="walkway", name="walkway", category="garden", type="one_off")
+    result = WeekendResult(Plan(date(2026, 11, 7), [], []), [], blocked=True)
+    print_plan(result, [(walkway, "needs details: duration_h")])
+    out = capsys.readouterr().out
+    assert "Nobody has free time" in out and "Not eligible: walkway (needs details: duration_h)" in out

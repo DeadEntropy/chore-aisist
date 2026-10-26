@@ -16,6 +16,7 @@ src/planner/
   seed.py       import / export chores.json
   scoring.py    which chores are due, and how urgent
   fitting.py    who does what, when, within each person's weekend hours
+  calendars.py  reads the family calendars from Nextcloud (CalDAV) → busy time and travel
   jobs.py       ties it together (dry runs today; the weekly run later)
   cli.py        the `planner` command
   migrations/   schema changes, applied in name order by `planner migrate`
@@ -24,7 +25,7 @@ deploy/         compose template + .env.example for the deployment folder
 chores.json     seed data, loaded once with `planner import`
 ```
 
-Later phases add `calendars.py` (Nextcloud) and the scheduler (see DESIGN.md §10).
+Later phases add writing the Chores calendar and the scheduler (see DESIGN.md §10).
 
 ## Development
 
@@ -53,6 +54,13 @@ TEST_DB_PORT=3308 TEST_DB_USER=root TEST_DB_PASSWORD=test .venv/bin/pytest
 docker rm -f chore-test-db
 ```
 
+### Calendars
+
+`planner plan` reads the family calendars over CalDAV as the `ChoreAisist` user (settings in `.env`, see
+`.env.example`). The Nextcloud certificate only covers its hostname, so the machine running the planner must resolve
+`nextcloud.local`: the Docker setup maps it with `extra_hosts`; elsewhere add an `/etc/hosts` entry, or use
+`--no-calendar`. Live check (read-only): `CALDAV_LIVE_TEST=1 .venv/bin/pytest tests/test_calendars_live.py`.
+
 ## Commands
 
 ```
@@ -66,9 +74,10 @@ planner chore list [--all]               show the catalog
 planner chore add <id> name=... category=home|garden type=recurring|one_off [more fields]
 planner chore set <id> key=value ...     e.g. interval=7,10,14 duration_h=1.5 priority=3
                                               assignee=nicolas|anna|either|both outdoor=yes needs=a,b
-planner plan --dry-run [--date YYYY-MM-DD] [--weeks N]
+planner plan --dry-run [--date YYYY-MM-DD] [--weeks N] [--no-calendar]
                                          print the coming weekend's plan (and the next N-1,
-                                         assuming planned chores get done); writes nothing
+                                         assuming planned chores get done), around the family
+                                         calendars; writes nothing
 ```
 
 `none` clears a field (`assignee=none`, `needs=none`).

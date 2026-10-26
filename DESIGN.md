@@ -175,6 +175,13 @@ score = urgency * priority
 
 Before scoring, find the **next available weekend** after this one (skipping weekends blocked by travel). If a chore would pass `max` before that next available weekend, bump its score as if it were overdue now. This front-loads work before a trip and naturally produces a catch-up plan afterwards.
 
+Implemented in phase 2: a weekend is **blocked** when nobody has any free time in the 08:00–18:00 window on either
+day, whether from all-day travel or timed events covering the weekend. If the following weekend(s) are blocked,
+chores are still scored as of this weekend, except recurring chores that would be past `max` by the next available
+weekend: those are scored as they would be then and are eligible now even below `min`, so they're done before the
+trip. Chores that wouldn't go overdue wait. Look-ahead reaches up to 6 weeks. It triggers only when *everyone* is
+away; a per-person version is a possible follow-up.
+
 Decided for phase 1:
 
 - Never-done recurring chores count as if last done `max` days before they were added: fully due (urgency 1.0) at
@@ -208,7 +215,11 @@ Implemented as **time slots** rather than subtracting event hours from the budge
 
 - Chores can be placed between **08:00 and 18:00** on Saturday and Sunday.
 - Each person's busy events are removed from that window. Calendar → person: Nicolas → Nicolas, Anna → Anna,
-  Family and School → both.
+  Family and School → both (configurable: `BUSY_CALENDARS`).
+- Timed events block their time **plus a buffer before and after** (`EVENT_BUFFER_MINUTES`, 30 by default).
+  Events marked free (`TRANSP:TRANSPARENT`) or cancelled don't block.
+- **All-day events are ignored**, except travel: an all-day event whose title has a word starting with `travel`,
+  `trip` or `away` (`TRAVEL_KEYWORDS`) blocks every day it covers for that calendar's people (zero capacity).
 - A person's chores never exceed their `weekend_hours` budget for the weekend (6 h each to start).
 
 ### 6.4 Fitting
@@ -229,15 +240,17 @@ pair) has the most free time left, which spreads work over the two days. Chores 
 
 `planner plan --dry-run [--date D] [--weeks N]` prints the plan without writing anything; with `--weeks N` it assumes
 each planned chore is done on its day and plans the following weekends too, to show how the backlog is worked off.
-Until calendar integration (phase 2), everyone is treated as free all weekend.
+It reads the family calendars (phase 2) and prints what blocks each weekend (`Busy:` / `Away:` lines) and when
+travel look-ahead moved the scoring date; `--no-calendar` treats everyone as free. If the calendars can't be read
+(network, certificate, password), the command stops with the reason rather than planning on wrong data.
 
 ## 7. CalDAV integration
 
 All access is as the app's Nextcloud user (`<app-user>`) with an app password (see `CALENDAR.md` for URLs, shares and secrets).
 
-- **Read**: query the shared family calendars (Nicolas, Family, School, Anna) for events in the planning horizon
-  (this weekend + look-ahead), expanding recurring events. Any event overlapping a weekend day reduces capacity;
-  events tagged/categorized as travel (or on a dedicated "Travel" calendar) block the whole weekend.
+- **Read** (phase 2, `calendars.py`): query the shared family calendars (Nicolas, Family, School, Anna) for events
+  in the planning horizon (the planned weekends + 6 weeks of look-ahead), with recurring events expanded. Times are
+  converted to local time (`PLANNER_TIMEZONE`). See §6.3 for what blocks whom.
 - **Write**: one VEVENT per planned chore in the Chores calendar, title `🧹 Mow the lawn (Nicolas)`,
   with a deterministic UID: `chore-{chore_id}-{plan_date}@household-planner`.
   Events only — no VTODOs.
@@ -319,7 +332,7 @@ no host cron.
 | Module | Does | Talks to |
 |---|---|---|
 | `config.py` | Settings from environment variables | — |
-| `models.py` | Data shapes: `Chore`, `Person`, `Completion` (+ `PlannedItem`, `Busy` later) | — |
+| `models.py` | Data shapes: `Chore`, `Person`, `Completion`, `CalEvent`, `Busy`, `Scored`, `PlannedItem`, `Plan` | — |
 | `db.py` | All SQL, including `migrate()` | MariaDB |
 | `seed.py` | Import / export `chores.json` | via `db.py` |
 | `cli.py` | The `planner` command | the above |
@@ -376,7 +389,7 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 
 - Notification channel: Home Assistant push, email, or Nextcloud Talk.
 - Weekends only, or daily guidance as well?
-- How travel is marked in the calendar (dedicated calendar vs. category/keyword).
+- Per-person travel look-ahead (bring forward one person's chores before their own trip).
 - Whether hired help (e.g. a lawn service) should be modeled as a third "person" with its own schedule.
 - Per-day capacity split (e.g. Saturday lighter when there are kids' events).
 
@@ -387,4 +400,7 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - **Calendar**: dedicated Chores calendar owned by the app user (`<app-user>`); events only; family read-only.
 - **Feedback loop**: completions reported through Claude Code → CLI; no phone task apps.
 - **Dev environment**: none separate for now; use the real database and calendar.
+- **Travel**: an all-day event whose title has a word starting with `travel`, `trip` or `away`, on any of the
+  configured calendars, makes that calendar's people away (shared calendars → both). Revisit with experience.
+- **Event buffer**: 30 min before and after timed events (`EVENT_BUFFER_MINUTES`).
 - **Seasonality**: removed from the chore fields for now; add back if a chore really only applies part of the year.
