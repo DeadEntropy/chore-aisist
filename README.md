@@ -28,7 +28,7 @@ deploy/         compose template + .env.example for the deployment folder
 chores.json     seed data, loaded once with `planner import`
 ```
 
-Later phases add writing the Chores calendar and the scheduler (see DESIGN.md §10).
+A later phase adds the scheduler (daily 20:00 run) and the weekly brief (see DESIGN.md §10).
 
 ## Development
 
@@ -62,7 +62,8 @@ docker rm -f chore-test-db
 `planner plan` reads the family calendars over CalDAV as the `ChoreAisist` user (settings in `.env`, see
 `.env.example`). The Nextcloud certificate only covers its hostname, so the machine running the planner must resolve
 `nextcloud.local`: the Docker setup maps it with `extra_hosts`; elsewhere add an `/etc/hosts` entry, or use
-`--no-calendar`. Live check (read-only): `CALDAV_LIVE_TEST=1 .venv/bin/pytest tests/test_calendars_live.py`.
+`--no-calendar`. Live check (reads the calendars, and writes one event dated 5 Jan 2030 to the Chores calendar,
+then deletes it): `CALDAV_LIVE_TEST=1 .venv/bin/pytest tests/test_calendars_live.py`.
 
 ## Commands
 

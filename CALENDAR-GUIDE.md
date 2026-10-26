@@ -161,13 +161,20 @@ read-only. Each chore is a timed event with a reminder 30 minutes before (`REMIN
 | `⏭ Mow the lawn (Nicolas)` | skipped (reported) |
 | `❔ Mow the lawn (Nicolas)` | its time passed and nobody reported it |
 
-How re-planning works (the planner will run every evening; for now you run `planner plan`):
-- It plans from **tomorrow**. Today and earlier are fixed: nothing there is moved or deleted.
-- Chores from tomorrow on that are still planned (🧹) are re-planned: kept if nothing changed, moved if your
-  calendar changed, removed if they no longer fit, and new ones are added.
+How re-planning works. The planner re-plans **from the current moment** to the end of a 7-day window: every evening
+(from phase 4; for now you run `planner plan`), and **right after every `done` / `skip`**.
+- Chores that already started are fixed: nothing in the past is moved or deleted.
+- Chores still planned (🧹) from now on are re-planned: kept if nothing changed, moved if your calendar changed,
+  removed if they no longer fit, and new ones are added. Chores go in the **earliest** free slot, so tomorrow's plan
+  doesn't change just because a new day appears at the end of the window.
 - A planned chore whose time has passed without a report becomes ❔ and goes back into the pool, so it can be
-  planned again. If you did it, report it (even later) and it turns ✅.
+  planned again (e.g. on the next day). If you did it, report it, even later: it turns ✅, and the re-plan that
+  follows removes any copy that was planned again.
 - ✅ and ⏭ are never changed: they're the history.
+
+Example: on Saturday evening nothing has been reported yet, so the 20:00 run marks Saturday's chores ❔ and plans some
+of them again on Sunday. On Sunday morning you tell Claude Code "I did all of Saturday's chores": they turn ✅ and
+Sunday goes back to its original plan.
 
 **Reporting** is done through Claude Code (or the commands directly):
 ```bash

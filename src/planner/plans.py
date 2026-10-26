@@ -1,11 +1,11 @@
 """The saved plan: what's fixed, what gets re-planned, and what the Chores calendar should show. Pure logic.
 
-Rules (each `planner plan` run plans from `start`, normally tomorrow):
-- Items starting before `start` are **frozen**: never moved or deleted.
+Rules (each run plans from `now`: the evening run, and a re-plan right after every done/skip report):
+- Items that started before `now` are **frozen**: never moved or deleted.
   - A frozen item still `open` whose end time has passed becomes **unknown** (❔): nobody reported it.
-  - A frozen item still `open` that hasn't ended yet (later today) stays open, and its chore isn't planned again.
-- Items from `start` on that are still `open` are **re-planned**: kept if unchanged, moved if their time changed,
-  removed if the chore dropped out of the plan, and new ones are added.
+  - A frozen item still `open` that hasn't ended yet (in progress) stays open, and its chore isn't planned again.
+- Items starting from `now` on that are still `open` are **re-planned**: kept if unchanged, moved if their time
+  changed, removed if the chore dropped out of the plan, and new ones are added.
 - `done` (✅) and `skipped` (⏭) items are never touched: they stay as history.
 The Chores calendar mirrors the `planned` table: `calendar_diff` makes the calendar match the records.
 """
@@ -35,10 +35,9 @@ def event_title(chore_name: str, people: list[str], status: str) -> str:
     return f"{STATUS_MARK[status]} {chore_name} ({who})"
 
 
-def freeze(records: list[PlannedRecord], start: date, now: datetime) -> tuple[list[PlannedRecord], set[str]]:
-    """(records to mark unknown, chores with an item still pending before `start`)."""
-    first = datetime.combine(start, datetime.min.time())
-    frozen_open = [r for r in records if r.start < first and r.status == "open"]
+def freeze(records: list[PlannedRecord], now: datetime) -> tuple[list[PlannedRecord], set[str]]:
+    """(records to mark unknown, chores with an item in progress at `now`)."""
+    frozen_open = [r for r in records if r.start < now and r.status == "open"]
     to_unknown = [r for r in frozen_open if r.end <= now]
     pending = {r.chore_id for r in frozen_open if r.end > now}
     return to_unknown, pending
@@ -55,9 +54,8 @@ class Changes:
         return bool(self.add or self.move or self.remove)
 
 
-def reconcile(records: list[PlannedRecord], items: list[PlannedItem], start: date) -> Changes:
-    """How the saved plan from `start` on must change to match the new plan `items`."""
-    first = datetime.combine(start, datetime.min.time())
+def reconcile(records: list[PlannedRecord], items: list[PlannedItem], now: datetime) -> Changes:
+    """How the saved plan from `now` on must change to match the new plan `items`."""
     by_uid = {r.uid: r for r in records}
     changes = Changes()
     wanted = set()
@@ -73,7 +71,7 @@ def reconcile(records: list[PlannedRecord], items: list[PlannedItem], start: dat
         elif (old.start, old.end, old.people) != (new.start, new.end, new.people):
             changes.move.append(replace(new, id=old.id))
         wanted.add(uid)
-    changes.remove = [r for r in records if r.start >= first and r.status == "open" and r.uid not in wanted]
+    changes.remove = [r for r in records if r.start >= now and r.status == "open" and r.uid not in wanted]
     return changes
 
 
@@ -93,11 +91,12 @@ class EventData:
     title: str
     start: datetime
     end: datetime
+    reminder: int = 0                    # minutes before the start (0 = no reminder)
 
 
-def desired_events(records: list[PlannedRecord], names: dict[str, str]) -> dict[str, EventData]:
+def desired_events(records: list[PlannedRecord], names: dict[str, str], reminder: int) -> dict[str, EventData]:
     return {r.uid: EventData(r.uid, event_title(names.get(r.chore_id, r.chore_id), r.people, r.status),
-                             r.start, r.end)
+                             r.start, r.end, reminder)
             for r in records}
 
 
@@ -109,8 +108,8 @@ def calendar_diff(desired: dict[str, EventData], existing: dict[str, EventData])
     return put, delete
 
 
-def build_ics(event: EventData, tz: ZoneInfo, reminder_minutes: int, now: datetime | None = None) -> str:
-    """The iCalendar text for one chore event, with a reminder `reminder_minutes` before (0 = none)."""
+def build_ics(event: EventData, tz: ZoneInfo, now: datetime | None = None) -> str:
+    """The iCalendar text for one chore event, with its reminder (if any)."""
     cal = icalendar.Calendar()
     cal.add("prodid", "-//chore-aisist//EN")
     cal.add("version", "2.0")
@@ -121,11 +120,11 @@ def build_ics(event: EventData, tz: ZoneInfo, reminder_minutes: int, now: dateti
     ev.add("dtend", event.end.replace(tzinfo=tz))
     ev.add("summary", event.title)
     ev.add("transp", "OPAQUE")
-    if reminder_minutes > 0:
+    if event.reminder > 0:
         alarm = icalendar.Alarm()
         alarm.add("action", "DISPLAY")
         alarm.add("description", event.title)
-        alarm.add("trigger", timedelta(minutes=-reminder_minutes))
+        alarm.add("trigger", timedelta(minutes=-event.reminder))
         ev.add_component(alarm)
     cal.add_component(ev)
     cal.add_missing_timezones()
@@ -140,5 +139,10 @@ def event_from_component(component, tz: ZoneInfo) -> EventData:
         return value.astimezone(tz).replace(tzinfo=None) if value.tzinfo else value
     end = component.get("dtend")
     start = local(component.get("dtstart").dt)
+    reminder = 0
+    for alarm in component.walk("VALARM"):
+        trigger = alarm.get("trigger")
+        if trigger is not None and isinstance(trigger.dt, timedelta):
+            reminder = round(-trigger.dt.total_seconds() / 60)
     return EventData(str(component.get("uid")), str(component.get("summary", "")), start,
-                     local(end.dt) if end else start)
+                     local(end.dt) if end else start, reminder)

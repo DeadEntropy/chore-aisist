@@ -1,6 +1,7 @@
 """Everything CalDAV: read the family calendars and classify their events; read and write the Chores calendar.
 
-`fetch_events` is the only function that talks to Nextcloud; the rest is pure and tested without a network.
+`list_calendars`, `fetch_events`, `chore_events` and `write_chore_events` talk to Nextcloud; the rest is pure and
+tested without a network.
 """
 
 import re
@@ -9,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from planner.config import CalendarSettings
 from planner.models import CalEvent
+from planner.plans import EventData, build_ics, event_from_component, is_ours
 
 
 def _client(settings: CalendarSettings):
@@ -33,8 +35,6 @@ def _chores_calendar(settings: CalendarSettings):
 
 def chore_events(settings: CalendarSettings, start: date, end: date) -> dict:
     """The planner's events in the Chores calendar between `start` and `end`, keyed by UID."""
-    from planner.plans import event_from_component, is_ours
-
     tz = ZoneInfo(settings.timezone)
     found = _chores_calendar(settings).search(event=True, start=datetime.combine(start, time(0), tzinfo=tz),
                                               end=datetime.combine(end, time(0), tzinfo=tz))
@@ -46,14 +46,12 @@ def chore_events(settings: CalendarSettings, start: date, end: date) -> dict:
     return events
 
 
-def write_chore_events(settings: CalendarSettings, put: list, delete: list[str]) -> None:
-    """Create or update `put` (EventData) and delete the `delete` UIDs in the Chores calendar."""
-    from planner.plans import build_ics, is_ours
-
+def write_chore_events(settings: CalendarSettings, put: list[EventData], delete: list[str]) -> None:
+    """Create or update `put` and delete the `delete` UIDs in the Chores calendar."""
     tz = ZoneInfo(settings.timezone)
     calendar = _chores_calendar(settings)
     for event in put:
-        calendar.add_event(ical=build_ics(event, tz, settings.reminder_minutes), increase_seqno=False)
+        calendar.add_event(ical=build_ics(event, tz), increase_seqno=False)
     for uid in delete:
         if is_ours(uid):                                   # never delete anything the planner didn't create
             calendar.event_by_uid(uid).delete()

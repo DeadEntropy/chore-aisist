@@ -29,12 +29,14 @@ def test_uid_and_title():
     assert event_title("Hedge", ["anna"], "skipped").startswith("⏭") and event_title("x", ["anna"], "unknown")[0] == "❔"
 
 
-def test_freeze_marks_past_open_items_unknown_and_keeps_later_today_pending():
+def test_freeze_marks_past_open_items_unknown_and_keeps_in_progress_pending():
     sun = SAT + timedelta(days=1)
-    records = [rec("morning", SAT, 9), rec("evening", SAT, 19), rec("done", SAT, 10, "done"), rec("future", sun, 9)]
-    unknown, pending = freeze(records, start=sun, now=datetime(2026, 10, 31, 18, 0))
+    records = [rec("morning", SAT, 9), rec("now", SAT, 17, hours=2), rec("evening", SAT, 19),
+               rec("done", SAT, 10, "done"), rec("future", sun, 9)]
+    unknown, pending = freeze(records, now=datetime(2026, 10, 31, 18, 0))
     assert [r.chore_id for r in unknown] == ["morning"]      # ended before now, never reported
-    assert pending == {"evening"}                            # later today: still open, not planned again
+    assert pending == {"now"}                                # in progress: not planned again
+    # "evening" starts after now: it is re-planned like any future item
 
 
 def test_reconcile_keeps_moves_adds_and_removes_only_future_open_items():
@@ -43,7 +45,7 @@ def test_reconcile_keeps_moves_adds_and_removes_only_future_open_items():
                rec("same", sun, 9), rec("moved", sun, 10), rec("gone", sun, 11),
                rec("history", sun, 12, "done")]           # done: untouched even though it's not in the new plan
     new = [item("same", sun, 9), item("moved", sun, 14), item("new", sun, 15)]
-    ch = reconcile(records, new, start=sun)
+    ch = reconcile(records, new, now=datetime.combine(sun, datetime.min.time()))
     assert [r.chore_id for r in ch.add] == ["new"]
     assert [(r.chore_id, r.start.hour) for r in ch.move] == [("moved", 14)]
     assert [r.chore_id for r in ch.remove] == ["gone"]
@@ -51,7 +53,7 @@ def test_reconcile_keeps_moves_adds_and_removes_only_future_open_items():
 
 def test_reconcile_does_not_overwrite_history_on_the_same_day():
     sun = SAT + timedelta(days=1)
-    ch = reconcile([rec("hedge", sun, 9, "skipped")], [item("hedge", sun, 14)], start=sun)
+    ch = reconcile([rec("hedge", sun, 9, "skipped")], [item("hedge", sun, 14)], now=datetime(2026, 11, 1, 8))
     assert not ch and [i.chore.id for i in ch.dropped] == ["hedge"]
 
 
@@ -64,7 +66,7 @@ def test_find_record_picks_open_or_unknown_closest_to_the_day():
 
 
 def test_calendar_diff_only_touches_our_events():
-    desired = desired_events([rec("mow", SAT, 9), rec("trim", SAT, 10, "done")], {"mow": "Mow the lawn"})
+    desired = desired_events([rec("mow", SAT, 9), rec("trim", SAT, 10, "done")], {"mow": "Mow the lawn"}, 0)
     stale = EventData(event_uid("trim", SAT), "🧹 trim (Nicolas)", datetime(2026, 10, 31, 10), datetime(2026, 10, 31, 11))
     existing = {stale.uid: stale,
                 event_uid("old", SAT): EventData(event_uid("old", SAT), "🧹 old", datetime(2026, 10, 31, 8),
@@ -79,11 +81,18 @@ def test_calendar_diff_only_touches_our_events():
 
 def test_ics_has_timezone_reminder_and_reads_back_the_same():
     event = EventData(event_uid("mow", SAT), "🧹 Mow the lawn (Nicolas)", datetime(2026, 10, 31, 9),
-                      datetime(2026, 10, 31, 10, 30))
-    text = build_ics(event, TZ, 30, now=datetime(2026, 10, 30, 20, tzinfo=TZ))
+                      datetime(2026, 10, 31, 10, 30), reminder=30)
+    text = build_ics(event, TZ, now=datetime(2026, 10, 30, 20, tzinfo=TZ))
     cal = icalendar.Calendar.from_ical(text)
     ev = cal.walk("VEVENT")[0]
     assert "BEGIN:VTIMEZONE" in text and "TZID=America/New_York" in text
     assert ev.walk("VALARM")[0].get("trigger").dt == timedelta(minutes=-30)
     assert event_from_component(ev, TZ) == event
-    assert "VALARM" not in build_ics(event, TZ, 0)
+    assert "VALARM" not in build_ics(EventData(event.uid, event.title, event.start, event.end, 0), TZ)
+
+
+def test_reminder_change_rewrites_the_event():
+    desired = desired_events([rec("mow", SAT, 9)], {}, 15)
+    existing = {u: EventData(e.uid, e.title, e.start, e.end, 30) for u, e in desired.items()}
+    put, delete = calendar_diff(desired, existing)
+    assert [e.reminder for e in put] == [15] and delete == []

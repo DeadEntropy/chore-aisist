@@ -56,3 +56,12 @@ def test_calendar_table_shows_use_and_missing_shares():
     assert rows["work_shared_by_x"] == ["Work", "nicolas"]
     assert rows["chores"] == ["Chores", "(not used)"]
     assert rows["gone_shared_by_x"][0] == "?" and "check the share" in rows["gone_shared_by_x"][1]
+
+
+@pytest.mark.parametrize("flags", [["--date", "2026-10-31"], ["--weeks", "2"], ["--no-calendar"]])
+def test_real_plan_rejects_dry_run_only_flags(flags):
+    from planner.cli import cmd_plan
+
+    args = build_parser().parse_args(["plan", *flags])
+    with pytest.raises(ValueError, match="only work with --dry-run"):
+        cmd_plan(None, args, None)

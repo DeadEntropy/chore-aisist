@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
 from planner import calendars, db, plans
-from planner.availability import first_available_day, first_default_day, free_slots
+from planner.availability import first_available_day, first_default_day, free_slots, subtract
 from planner.config import PlanningSettings
 from planner.fitting import plan_period
 from planner.models import CalEvent, Chore, Completion, Person, Plan, PlannedRecord
@@ -36,14 +36,18 @@ def calendar_range(start: date, periods: int) -> tuple[date, date]:
 HISTORY_DAYS = 14         # how far back the saved plan is checked (freezing, unknowns) and mirrored to the calendar
 
 
+class CalendarSyncError(Exception):
+    """The database change is committed, but the Chores calendar couldn't be updated (the next run retries)."""
+
+
 def dry_run(conn, start: date, periods: int, events: list[CalEvent], buffer_minutes: int,
             planning: PlanningSettings, now: datetime) -> list[PeriodResult]:
     """Load chores, people and history from the database, then `plan_periods` without writing anything.
-    Chores with an item still pending before `start` (later today) aren't planned again."""
-    _, pending = plans.freeze(_saved(conn, start), start, now)
+    Planning from today starts at `now`; chores in progress aren't planned again."""
+    _, pending = plans.freeze(_saved(conn, now.date()), now)
     chores = [c for c in db.get_chores(conn) if c.id not in pending]
-    return plan_periods(chores, db.get_people(conn), db.last_done_dates(conn),
-                        start, periods, events, buffer_minutes, planning)
+    return plan_periods(chores, db.get_people(conn), db.last_done_dates(conn), start, periods, events,
+                        buffer_minutes, planning, not_before=now if start <= now.date() else None)
 
 
 @dataclass
@@ -55,15 +59,16 @@ class RunSummary:
     calendar_deleted: int = 0
 
 
-def run_plan(conn, cal, planning: PlanningSettings, start: date, now: datetime,
-             events: list[CalEvent]) -> RunSummary:
-    """Plan the 7 days from `start`, save it, and make the Chores calendar match (see `plans` for the rules)."""
+def run_plan(conn, cal, planning: PlanningSettings, now: datetime, events: list[CalEvent]) -> RunSummary:
+    """Plan from `now` to the end of the 7-day period starting today, save it, and make the Chores calendar match
+    (see `plans` for the rules). Raises CalendarSyncError if only the calendar update failed."""
+    start = now.date()
     records = _saved(conn, start)
-    to_unknown, pending = plans.freeze(records, start, now)
+    to_unknown, pending = plans.freeze(records, now)
     chores = [c for c in db.get_chores(conn) if c.id not in pending]
     result = plan_periods(chores, db.get_people(conn), db.last_done_dates(conn), start, 1, events,
-                          cal.buffer_minutes, planning)[0]
-    changes = plans.reconcile(records, result.plan.items, start)
+                          cal.buffer_minutes, planning, not_before=now)[0]
+    changes = plans.reconcile(records, result.plan.items, now)
 
     for r in to_unknown:
         r.status = "unknown"
@@ -75,15 +80,20 @@ def run_plan(conn, cal, planning: PlanningSettings, start: date, now: datetime,
     db.delete_planned(conn, [r.uid for r in changes.remove])
     conn.commit()                       # the database is the source of truth; the calendar mirrors it
 
-    put, deleted = sync_calendar(conn, cal, start - timedelta(days=HISTORY_DAYS), start + timedelta(days=PERIOD_DAYS))
-    return RunSummary(result, changes, to_unknown, put, deleted)
+    summary = RunSummary(result, changes, to_unknown)
+    try:
+        summary.calendar_put, summary.calendar_deleted = sync_calendar(
+            conn, cal, start - timedelta(days=HISTORY_DAYS), start + timedelta(days=PERIOD_DAYS))
+    except Exception as exc:
+        raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
+    return summary
 
 
 def sync_calendar(conn, cal, first: date, last: date) -> tuple[int, int]:
     """Make the planner's events in the Chores calendar between `first` and `last` match the `planned` table."""
     records = db.planned_between(conn, _at(first), _at(last))
     names = {c.id: c.name for c in db.get_chores(conn, include_inactive=True)}
-    desired = plans.desired_events(records, names)
+    desired = plans.desired_events(records, names, cal.reminder_minutes)
     existing = calendars.chore_events(cal, first, last)
     put, delete = plans.calendar_diff(desired, existing)
     calendars.write_chore_events(cal, put, delete)
@@ -121,10 +131,15 @@ def report(conn, cal, chore_id: str, outcome: str, day: date, by: list[str] | No
         db.record_completion(conn, Completion(chore_id, day, outcome, "claude", person))
     if record:
         record.status = outcome
+        if outcome == "done":
+            record.people = who                    # the event shows who actually did it
         db.update_planned(conn, record)
     conn.commit()
     if cal is not None and record is not None:
-        sync_calendar(conn, cal, record.start.date(), record.start.date() + timedelta(days=1))
+        try:
+            sync_calendar(conn, cal, record.start.date(), record.start.date() + timedelta(days=1))
+        except Exception as exc:
+            raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
     return record
 
 
@@ -139,10 +154,11 @@ def _at(day: date) -> datetime:
 
 def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str, date], start: date,
                  periods: int, events: list[CalEvent], buffer_minutes: int,
-                 planning: PlanningSettings) -> list[PeriodResult]:
+                 planning: PlanningSettings, not_before: datetime | None = None) -> list[PeriodResult]:
     """Plan `periods` consecutive 7-day periods from `start` (pure: no database, no network).
 
-    From the second period on, every chore planned in the period before is assumed done on its day.
+    With `not_before` (normally now), nothing is planned before that moment. From the second period on, every chore
+    planned in the period before is assumed done on its day.
     """
     person_ids = [p.id for p in people]
     last_done = dict(last_done)
@@ -151,6 +167,10 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
         first = start + timedelta(days=PERIOD_DAYS * k)
         days = [first + timedelta(days=i) for i in range(PERIOD_DAYS)]
         free = free_slots(person_ids, days, planning.windows, events, buffer_minutes, planning.extra_day_window)
+        if not_before is not None and not_before.date() in days:
+            cutoff = not_before.hour * 60 + not_before.minute + (1 if not_before.second else 0)
+            for p in person_ids:
+                free[(p, not_before.date())] = subtract(free[(p, not_before.date())], (0, cutoff))
 
         ahead = next_available(person_ids, days[-1], events, buffer_minutes, planning)
         scored, excluded = score_chores(chores, last_done, today=first, next_available=ahead)
