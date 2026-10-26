@@ -161,6 +161,12 @@ def add_person(conn, person: Person) -> bool:
         return cur.rowcount == 1
 
 
+def update_person(conn, person: Person) -> None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE person SET name = %s, weekend_hours = %s WHERE id = %s",
+                    (person.name, person.weekend_hours, person.id))
+
+
 # --- history ----------------------------------------------------------------
 
 def record_completion(conn, completion: Completion) -> None:

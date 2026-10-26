@@ -76,8 +76,10 @@ Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, read-only)
 
 ## 5. Data model
 
-Everything lives in the `chore-aisist-db` MariaDB database. `chores.json` in this repo is only the **seed**: it is
-imported once (`planner import chores.json`) and after that the database is the source of truth.
+Everything lives in the `chore-aisist-db` MariaDB database. `chores.json` in this repo is the **seed**: `planner
+import chores.json` adds new chores; `--update` also brings existing chores and people in line with the file, and
+`--retire` switches off (never deletes) chores no longer in it, so the file can keep being edited and re-synced.
+Edits made with `planner chore set` are overwritten by the next `--update` if the file disagrees.
 `planner export` writes the current catalog back out as JSON for a readable snapshot.
 
 ```sql

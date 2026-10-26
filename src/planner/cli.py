@@ -34,8 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("migrate", help="create or upgrade the database tables")
     p.set_defaults(func=cmd_migrate)
 
-    p = sub.add_parser("import", help="load a seed file such as chores.json (adds missing chores only)")
+    p = sub.add_parser("import", help="load a seed file such as chores.json (adds missing chores)")
     p.add_argument("path", type=Path)
+    p.add_argument("--update", action="store_true", help="also update existing chores and people from the file")
+    p.add_argument("--retire", action="store_true", help="retire (not delete) chores missing from the file")
     p.set_defaults(func=cmd_import)
 
     p = sub.add_parser("export", help="write the database out as JSON")
@@ -75,9 +77,10 @@ def cmd_migrate(conn, args, settings):
 
 
 def cmd_import(conn, args, settings):
-    s = seed.import_json(conn, args.path)
-    print(f"Added {s['chores']} chores, {s['people']} people, {s['completions']} completions"
-          f" ({s['skipped_existing']} chores already existed).")
+    s = seed.import_json(conn, args.path, update=args.update, retire=args.retire)
+    print(f"Chores: {s['chores']} added, {s['updated']} updated, {s['retired']} retired, {s['unchanged']} unchanged"
+          f"{' (use --update to apply changes to existing chores)' if not args.update else ''}.")
+    print(f"People: {s['people']} added, {s['people_updated']} updated. Completions recorded: {s['completions']}.")
 
 
 def cmd_export(conn, args, settings):

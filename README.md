@@ -54,7 +54,10 @@ docker rm -f chore-test-db
 
 ```
 planner migrate                          create / upgrade tables
-planner import chores.json               load seed data (adds missing chores only)
+planner import chores.json [--update] [--retire]
+                                         load seed data: adds new chores; --update also applies
+                                         changes to existing chores/people; --retire switches off
+                                         chores missing from the file (history is kept)
 planner export out.json                  snapshot the database as JSON
 planner chore list [--all]               show the catalog
 planner chore add <id> name=... category=home|garden type=recurring|one_off [more fields]
