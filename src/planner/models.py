@@ -84,3 +84,15 @@ class Plan:
     days: list[date]                     # the days planned (every day of the period, free time or not)
     items: list[PlannedItem]
     unplanned: list[tuple[Chore, str]]   # eligible chores that didn't fit, with the reason
+
+
+@dataclass
+class PlannedRecord:
+    """A chore saved in the `planned` table (and shown in the Chores calendar)."""
+    chore_id: str
+    people: list[str]
+    start: datetime
+    end: datetime
+    uid: str
+    status: str = "open"                 # open | done | skipped | unknown
+    id: int | None = None

@@ -1,14 +1,14 @@
 """All database access. The only module that contains SQL."""
 
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pymysql
 from pymysql.cursors import DictCursor
 
 from planner.config import Settings
-from planner.models import Chore, Completion, Person
+from planner.models import Chore, Completion, Person, PlannedRecord
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -191,3 +191,33 @@ def last_done_dates(conn) -> dict[str, date]:
         cur.execute("SELECT chore_id, MAX(completed_on) AS last FROM completion"
                     " WHERE outcome = 'done' GROUP BY chore_id")
         return {r["chore_id"]: r["last"] for r in cur.fetchall()}
+
+
+# --- planned chores -------------------------------------------------------------
+
+def planned_between(conn, start: datetime, end: datetime) -> list[PlannedRecord]:
+    """Planned chores starting in [start, end), oldest first."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, chore_id, people, start_at, end_at, caldav_uid, status FROM planned"
+                    " WHERE start_at >= %s AND start_at < %s ORDER BY start_at, id", (start, end))
+        return [PlannedRecord(r["chore_id"], r["people"].split(","), r["start_at"], r["end_at"], r["caldav_uid"],
+                              r["status"], r["id"]) for r in cur.fetchall()]
+
+
+def add_planned(conn, record: PlannedRecord) -> None:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO planned (chore_id, people, start_at, end_at, caldav_uid, status)"
+                    " VALUES (%s, %s, %s, %s, %s, %s)",
+                    (record.chore_id, ",".join(record.people), record.start, record.end, record.uid, record.status))
+
+
+def update_planned(conn, record: PlannedRecord) -> None:
+    """Update time, people and status of an existing record (matched on its UID)."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE planned SET people = %s, start_at = %s, end_at = %s, status = %s WHERE caldav_uid = %s",
+                    (",".join(record.people), record.start, record.end, record.status, record.uid))
+
+
+def delete_planned(conn, uids: list[str]) -> None:
+    with conn.cursor() as cur:
+        cur.executemany("DELETE FROM planned WHERE caldav_uid = %s", [(u,) for u in uids])

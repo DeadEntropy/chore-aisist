@@ -19,7 +19,8 @@ src/planner/
   availability.py  free chore time per person and day (default windows + calendar keywords)
   fitting.py    who does what, when, in the free time
   calendars.py  reads the family calendars from Nextcloud (CalDAV) → busy time and travel
-  jobs.py       ties it together (dry runs today; the weekly run later)
+  plans.py      the saved plan: freeze/unknown rules, re-planning, Chores calendar events
+  jobs.py       ties it together: plan runs, done/skip, calendar sync
   cli.py        the `planner` command
   migrations/   schema changes, applied in name order by `planner migrate`
 tests/          pytest; database tests need a throwaway MariaDB (see below)
@@ -77,6 +78,10 @@ planner chore add <id> name=... category=home|garden type=recurring|one_off [mor
 planner chore set <id> key=value ...     e.g. interval=7,10,14 duration_h=1.5 priority=3
                                               assignee=nicolas|anna|either|both outdoor=yes needs=a,b
 planner calendars                        list the calendars the app can read and whom each blocks
+planner plan                             plan the next 7 days, save it, update the Chores calendar
+planner done <chore> [--date D] [--by nicolas,anna]   record a chore as done (✅ in the calendar)
+planner skip <chore> [--date D]          record a chore as skipped (⏭)
+planner status                           last/next 7 days with ✅ ⏭ ❔ 🧹, and what's overdue
 planner plan --dry-run [--date YYYY-MM-DD] [--weeks N] [--no-calendar]
                                          print the plan for the next 7 days (and the next N-1
                                          periods, assuming planned chores get done), around

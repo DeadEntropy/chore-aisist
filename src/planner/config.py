@@ -32,6 +32,8 @@ class CalendarSettings:
     keywords: dict[str, tuple[str, ...]]       # event kind → title keywords (see KEYWORD_SETTINGS)
     timezone: str
     timeout_seconds: int = 30                  # per CalDAV request, so a stuck server can't hang the planner
+    chores_calendar: str = "chores"            # URI of the calendar the planner writes (owned by the app user)
+    reminder_minutes: int = 30                 # phone reminder before each chore event (0 = none)
 
     def people(self) -> set[str]:
         return {p for _, names in self.calendars for p in names}
@@ -83,6 +85,9 @@ def load_calendar_settings() -> CalendarSettings | None:
     buffer = int(os.environ.get("EVENT_BUFFER_MINUTES", "30"))
     if buffer < 0:
         raise ValueError(f"EVENT_BUFFER_MINUTES must be 0 or more, got {buffer}")
+    reminder = int(os.environ.get("REMINDER_MINUTES", "30"))
+    if reminder < 0:
+        raise ValueError(f"REMINDER_MINUTES must be 0 or more, got {reminder}")
     timeout = int(os.environ.get("CALDAV_TIMEOUT_SECONDS", "30"))
     if timeout <= 0:
         raise ValueError(f"CALDAV_TIMEOUT_SECONDS must be more than 0, got {timeout}")
@@ -96,6 +101,8 @@ def load_calendar_settings() -> CalendarSettings | None:
         keywords={kind: _keywords(var, default) for kind, (var, default) in KEYWORD_SETTINGS.items()},
         timezone=os.environ.get("PLANNER_TIMEZONE", "America/New_York"),
         timeout_seconds=timeout,
+        chores_calendar=os.environ.get("CHORES_CALENDAR_URI", "chores"),
+        reminder_minutes=reminder,
     )
 
 

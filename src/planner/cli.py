@@ -2,7 +2,7 @@
 
 import argparse
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pymysql
@@ -64,12 +64,23 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("calendars", help="list the calendars the app can read, and who each one blocks")
     p.set_defaults(func=cmd_calendars)
 
-    p = sub.add_parser("plan", help="plan the next 7 days")
+    p = sub.add_parser("plan", help="plan the next 7 days and update the Chores calendar")
     p.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
     p.add_argument("--date", type=date.fromisoformat, help="first day to plan (YYYY-MM-DD); default tomorrow")
     p.add_argument("--weeks", type=_positive_int, default=1, help="dry run: plan N consecutive 7-day periods")
-    p.add_argument("--no-calendar", action="store_true", help="ignore the family calendars (everyone free)")
+    p.add_argument("--no-calendar", action="store_true", help="dry run: ignore the family calendars (everyone free)")
     p.set_defaults(func=cmd_plan)
+
+    for name, verb in (("done", "was done"), ("skip", "was skipped")):
+        p = sub.add_parser(name, help=f"record that a chore {verb}")
+        p.add_argument("chore", help="chore id, see `planner chore list`")
+        p.add_argument("--date", type=date.fromisoformat, help="when (YYYY-MM-DD); default today")
+        if name == "done":
+            p.add_argument("--by", help="who did it, e.g. nicolas or nicolas,anna; default: who it was planned for")
+        p.set_defaults(func=cmd_report, outcome=name)
+
+    p = sub.add_parser("status", help="recent and upcoming planned chores, and what's overdue")
+    p.set_defaults(func=cmd_status)
     return parser
 
 
@@ -154,10 +165,10 @@ def calendar_table(found: list[tuple[str, str]], configured: dict[str, tuple[str
 
 
 def cmd_plan(conn, args, settings):
-    if not args.dry_run:
-        raise ValueError("Writing plans to the calendar comes with calendar integration; use --dry-run")
     start = args.date or date.today() + timedelta(days=1)
     planning = load_planning_settings()
+    if not args.dry_run:
+        return run_plan(conn, start, planning)
     events, buffer = [], 0
     cal = None if args.no_calendar else load_calendar_settings()
     if args.no_calendar:
@@ -175,10 +186,85 @@ def cmd_plan(conn, args, settings):
         buffer = cal.buffer_minutes
 
     shown: set[tuple[str, str]] = set()
-    for result in jobs.dry_run(conn, start, args.weeks, events, buffer, planning):
+    for result in jobs.dry_run(conn, start, args.weeks, events, buffer, planning, datetime.now()):
         new = [(c, why) for c, why in result.excluded if (c.id, why) not in shown]   # each reason once
         shown.update((c.id, why) for c, why in new)
         print_plan(result, new)
+
+
+def run_plan(conn, start: date, planning) -> None:
+    """The real run: plan, save, and update the Chores calendar."""
+    cal = load_calendar_settings()
+    if cal is None:
+        raise ValueError("Writing the plan needs the calendars (CALDAV_URL not set); use --dry-run to only print it")
+    check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
+    events = fetch_calendar_events(cal, *jobs.calendar_range(start, 1))
+    try:
+        summary = jobs.run_plan(conn, cal, planning, start, datetime.now(), events)
+    except (ValueError, pymysql.err.MySQLError):
+        raise
+    except Exception as exc:          # the plan is saved; only the calendar update failed
+        raise ValueError(f"Plan saved, but couldn't update the Chores calendar ({type(exc).__name__}: {exc}); "
+                         "run `planner plan` again to retry") from exc
+    print_plan(summary.result, summary.result.excluded)
+    c = summary.changes
+    print(f"Saved: {len(c.add)} added, {len(c.move)} moved, {len(c.remove)} removed"
+          f"{f', {len(summary.unknown)} past chores marked unknown' if summary.unknown else ''}."
+          f" Chores calendar: {summary.calendar_put} events written, {summary.calendar_deleted} deleted.")
+    if c.dropped:
+        print("Not planned again today (already done or skipped that day): "
+              + ", ".join(i.chore.id for i in c.dropped))
+
+
+def fetch_calendar_events(cal, first: date, last: date):
+    try:
+        return calendars.fetch_events(cal, first, last)
+    except Exception as exc:          # network, TLS, auth: report it plainly, don't plan on wrong data
+        raise ValueError(f"Couldn't read the calendars ({type(exc).__name__}: {exc}). "
+                         "Use --dry-run --no-calendar to plan without them.") from exc
+
+
+def cmd_report(conn, args, settings):
+    day = args.date or date.today()
+    by = [p.strip() for p in args.by.split(",") if p.strip()] if getattr(args, "by", None) else None
+    cal = load_calendar_settings()
+    try:
+        record = jobs.report(conn, cal, args.chore, args.outcome, day, by)
+    except ValueError:
+        raise
+    except Exception as exc:          # the database is updated; only the calendar update failed
+        raise ValueError(f"Recorded, but couldn't update the Chores calendar ({type(exc).__name__}: {exc}); "
+                         "the next `planner plan` will fix it") from exc
+    verb = "done" if args.outcome == "done" else "skipped"
+    where = f" (planned {record.start:%a %d %b %H:%M})" if record else " (it wasn't in the plan)"
+    print(f"Recorded {args.chore} as {verb} on {day:%a %d %b}{where}.")
+    if cal is None and record:
+        print("Calendars not configured: the Chores calendar wasn't updated.")
+
+
+def cmd_status(conn, args, settings):
+    from planner.plans import STATUS_MARK
+    from planner.scoring import score_chores
+
+    today = date.today()
+    names = {c.id: c.name for c in db.get_chores(conn, include_inactive=True)}
+    records = db.planned_between(conn, datetime.combine(today - timedelta(days=7), datetime.min.time()),
+                                 datetime.combine(today + timedelta(days=8), datetime.min.time()))
+    day = None
+    for r in records:
+        if r.start.date() != day:
+            day = r.start.date()
+            print(f"{day:%A %d %b}" + ("  (today)" if day == today else ""))
+        who = " & ".join(p.capitalize() for p in r.people)
+        print(f"  {STATUS_MARK[r.status]} {r.start:%H:%M}-{r.end:%H:%M}  {names.get(r.chore_id, r.chore_id)}"
+              f"  ({who})  [{r.chore_id}]")
+    if not records:
+        print("Nothing planned in the last or next 7 days.")
+    upcoming = {r.chore_id for r in records if r.status == "open" and r.start.date() >= today}
+    scored, _ = score_chores(db.get_chores(conn), db.last_done_dates(conn), today)
+    overdue = [s for s in scored if s.chore.type == "recurring" and s.urgency > 1 and s.chore.id not in upcoming]
+    if overdue:
+        print("\nOverdue and not planned: " + ", ".join(f"{s.chore.id} ({s.urgency:.1f})" for s in overdue))
 
 
 def check_calendar_people(calendar_people: set[str], known: set[str]) -> None:

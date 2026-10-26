@@ -247,11 +247,16 @@ All access is as the app's Nextcloud user (`<app-user>`) with an app password (s
 - **Read** (phase 2, `calendars.py`): query the shared family calendars (Nicolas, Family, School, Anna) for events
   in the planning horizon (the planned weekends + 6 weeks of look-ahead), with recurring events expanded. Times are
   converted to local time (`PLANNER_TIMEZONE`). See §6.3 for what blocks whom.
-- **Write**: one VEVENT per planned chore in the Chores calendar, title `🧹 Mow the lawn (Nicolas)`,
-  with a deterministic UID: `chore-{chore_id}-{plan_date}@household-planner`.
-  Events only — no VTODOs.
-- **Single writer**: Nicolas and Anna have read-only access. Each run reconciles the Chores calendar against the
-  `planned` table, so the calendar is always exactly what the planner decided.
+- **Write** (phase 3, `plans.py` + `calendars.py`): one timed VEVENT per planned chore in the Chores calendar, title
+  `🧹 Mow the lawn (Nicolas)` (`✅` done, `⏭` skipped, `❔` unknown), a DISPLAY alarm `REMINDER_MINUTES` before
+  (30; 0 = none), and a deterministic UID `chore-{chore_id}-{date}@chore-aisist`. Events only — no VTODOs.
+- **Single writer, calendar mirrors the database**: the `planned` table is the source of truth; after each change the
+  planner makes its events in the Chores calendar (last 14 days → next 7) match it: create, update, delete. Only
+  events with a `@chore-aisist` UID are ever deleted. Nicolas and Anna have read-only access.
+- **Re-planning rules** (each run plans the 7 days from tomorrow): items before tomorrow are frozen; an open frozen
+  item whose time has passed becomes `unknown` and its chore goes back into the pool; one later today stays open and
+  isn't planned again; open items from tomorrow on are re-planned (kept, moved, removed, added); `done`/`skipped`
+  items are never changed. See `CALENDAR-GUIDE.md` §4.
 - **Clients**: any CalDAV calendar app (iOS Calendar, DAVx5 + any Android calendar, Nextcloud web UI) — view only.
 
 ## 7b. Reporting completions (Claude Code)
@@ -260,21 +265,23 @@ The feedback loop is conversational. On the home server, Nicolas or Anna tells C
 
 > "I mowed the lawn and weeded the pool deck this morning. Skipped the hedges."
 
-Claude Code maps that to planner CLI calls inside the running container:
+Claude Code maps that to planner commands (until the scheduler makes the container long-running, as one-off runs):
 
 ```bash
-docker exec chore-aisist planner done mow-lawn --date 2026-10-31
-docker exec chore-aisist planner done weed-pool-deck --date 2026-10-31
-docker exec chore-aisist planner skip trim-hedge-mendel
+docker compose run --rm chore-aisist done mow-lawn --date 2026-10-31
+docker compose run --rm chore-aisist done weed-pool-deck --date 2026-10-31
+docker compose run --rm chore-aisist skip trim-hedge-mendel
+docker compose run --rm chore-aisist status
 ```
 
 A `/chores` Claude Code command file on the home server (like the existing `/calendar` command) documents this
 vocabulary for Claude Code.
 
-- `done` inserts a `completion` row (`outcome = done`, `source = claude`), marks the `planned` row `done`, and
-  updates the calendar event (e.g. prefix `✅`).
-- `skip` records `outcome = skipped` (does not reset the interval) and marks the planned row `skipped`.
-- Planned chores never reported by the end of their weekend become `expired` and simply rescore next run.
+- `done` inserts a `completion` row per person (`outcome = done`, `source = claude`; people default to whoever the
+  item was planned for, `--by` overrides), marks the planned item closest to the date `done`, and updates its event
+  (`✅`). A chore that wasn't planned can still be reported done (with `--by` if its assignee is `either`).
+- `skip` records `outcome = skipped` (does not reset the interval) and marks the planned item `skipped` (`⏭`).
+- Planned chores whose time passed without a report become `unknown` (`❔`) at the next run and rescore.
 - Catalog edits go through the CLI too ("hedges take closer to 3 hours" → `planner chore set trim-hedge-mendel
   duration_h=3`; "add: clean the gutters every 6 months" → `planner chore add …`), then `planner plan` refreshes
   the current weekend.
