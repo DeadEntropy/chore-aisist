@@ -2,11 +2,12 @@
 
 import argparse
 import sys
+from datetime import date
 from pathlib import Path
 
 import pymysql
 
-from planner import db, seed
+from planner import db, jobs, seed
 from planner.config import load_settings
 from planner.models import Chore
 
@@ -33,8 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("migrate", help="create or upgrade the database tables")
     p.set_defaults(func=cmd_migrate)
 
-    p = sub.add_parser("import", help="load a seed file such as chores.json (adds missing chores only)")
+    p = sub.add_parser("import", help="load a seed file such as chores.json (adds missing chores)")
     p.add_argument("path", type=Path)
+    p.add_argument("--update", action="store_true", help="also update existing chores and people from the file")
+    p.add_argument("--retire", action="store_true", help="retire (not delete) chores missing from the file")
     p.set_defaults(func=cmd_import)
 
     p = sub.add_parser("export", help="write the database out as JSON")
@@ -57,6 +60,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p.add_argument("fields", nargs="+", metavar="key=value")
     p.set_defaults(func=cmd_chore_set)
+
+    p = sub.add_parser("plan", help="plan the coming weekend")
+    p.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
+    p.add_argument("--date", type=date.fromisoformat, help="plan the weekend on/after this date (YYYY-MM-DD)")
+    p.add_argument("--weeks", type=_positive_int, default=1, help="dry run: also plan the following N-1 weekends")
+    p.set_defaults(func=cmd_plan)
     return parser
 
 
@@ -68,9 +77,10 @@ def cmd_migrate(conn, args, settings):
 
 
 def cmd_import(conn, args, settings):
-    s = seed.import_json(conn, args.path)
-    print(f"Added {s['chores']} chores, {s['people']} people, {s['completions']} completions"
-          f" ({s['skipped_existing']} chores already existed).")
+    s = seed.import_json(conn, args.path, update=args.update, retire=args.retire)
+    print(f"Chores: {s['chores']} added, {s['updated']} updated, {s['retired']} retired, {s['unchanged']} unchanged"
+          f"{' (use --update to apply changes to existing chores)' if not args.update else ''}.")
+    print(f"People: {s['people']} added, {s['people_updated']} updated. Completions recorded: {s['completions']}.")
 
 
 def cmd_export(conn, args, settings):
@@ -117,7 +127,48 @@ def cmd_chore_set(conn, args, settings):
     print(f"Updated {args.id}")
 
 
+def cmd_plan(conn, args, settings):
+    if not args.dry_run:
+        raise ValueError("Writing plans to the calendar comes with calendar integration; use --dry-run")
+    saturday = jobs.next_saturday(args.date or date.today())
+    shown: set[tuple[str, str]] = set()
+    for plan, excluded in jobs.dry_run(conn, saturday, args.weeks):
+        new = [(c, why) for c, why in excluded if (c.id, why) not in shown]   # each reason once, when it appears
+        shown.update((c.id, why) for c, why in new)
+        print_plan(plan, new)
+
+
+def print_plan(plan, excluded) -> None:
+    print(f"=== Weekend of {plan.saturday:%a %d %b %Y}")
+    hours: dict[str, float] = {}
+    day = None
+    for item in plan.items:
+        if item.start.date() != day:
+            day = item.start.date()
+            print(f"  {day:%A}")
+        who = " & ".join(p.capitalize() for p in item.people)
+        print(f"    {item.start:%H:%M}-{item.end:%H:%M}  {item.chore.name}  ({who})  score {item.score:g}")
+        for p in item.people:
+            hours[p] = hours.get(p, 0) + item.chore.duration_h
+    if not plan.items:
+        print("  nothing planned")
+    if hours:
+        print("  Hours: " + ", ".join(f"{p.capitalize()} {h:g}" for p, h in sorted(hours.items())))
+    if plan.unplanned:
+        print("  Didn't fit: " + "; ".join(f"{c.id} ({why})" for c, why in plan.unplanned))
+    for chore, why in excluded:
+        print(f"  Not eligible: {chore.id} ({why})")
+    print()
+
+
 # --- helpers ----------------------------------------------------------------
+
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
+
 
 def parse_fields(pairs: list[str]) -> dict:
     """Turn ['duration_h=1.5', 'interval=7,10,14', 'needs=a,b'] into chore column values."""

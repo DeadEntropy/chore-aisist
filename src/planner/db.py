@@ -1,6 +1,7 @@
 """All database access. The only module that contains SQL."""
 
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 
 import pymysql
@@ -78,7 +79,7 @@ def _split_sql(text: str) -> list[str]:
 def get_chores(conn, include_inactive: bool = False) -> list[Chore]:
     with conn.cursor() as cur:
         where = "" if include_inactive else "WHERE active"
-        cur.execute(f"SELECT {', '.join(CHORE_COLUMNS)} FROM chore {where} ORDER BY category, id")
+        cur.execute(f"SELECT {', '.join(CHORE_COLUMNS)}, created_at FROM chore {where} ORDER BY category, id")
         rows = cur.fetchall()
         cur.execute("SELECT chore_id, needs_id FROM chore_need ORDER BY needs_id")
         needs: dict[str, list[str]] = {}
@@ -89,7 +90,7 @@ def get_chores(conn, include_inactive: bool = False) -> list[Chore]:
 
 def get_chore(conn, chore_id: str) -> Chore | None:
     with conn.cursor() as cur:
-        cur.execute(f"SELECT {', '.join(CHORE_COLUMNS)} FROM chore WHERE id = %s", (chore_id,))
+        cur.execute(f"SELECT {', '.join(CHORE_COLUMNS)}, created_at FROM chore WHERE id = %s", (chore_id,))
         row = cur.fetchone()
         if row is None:
             return None
@@ -133,10 +134,12 @@ def set_needs(conn, chore_id: str, needs: list[str]) -> None:
 
 
 def _row_to_chore(row: dict, needs: list[str]) -> Chore:
+    created_at = row.pop("created_at")
     return Chore(
         **{**row, "duration_h": float(row["duration_h"]) if row["duration_h"] is not None else None,
            "outdoor": bool(row["outdoor"]), "active": bool(row["active"])},
         needs=needs,
+        created_on=created_at.date(),
     )
 
 
@@ -158,6 +161,12 @@ def add_person(conn, person: Person) -> bool:
         return cur.rowcount == 1
 
 
+def update_person(conn, person: Person) -> None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE person SET name = %s, weekend_hours = %s WHERE id = %s",
+                    (person.name, person.weekend_hours, person.id))
+
+
 # --- history ----------------------------------------------------------------
 
 def record_completion(conn, completion: Completion) -> None:
@@ -175,3 +184,11 @@ def done_chore_ids(conn) -> set[str]:
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT chore_id FROM completion WHERE outcome = 'done'")
         return {r["chore_id"] for r in cur.fetchall()}
+
+
+def last_done_dates(conn) -> dict[str, date]:
+    """Most recent 'done' date per chore."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT chore_id, MAX(completed_on) AS last FROM completion"
+                    " WHERE outcome = 'done' GROUP BY chore_id")
+        return {r["chore_id"]: r["last"] for r in cur.fetchall()}

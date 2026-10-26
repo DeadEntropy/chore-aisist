@@ -14,6 +14,9 @@ src/planner/
   models.py     data shapes (Chore, Person, Completion)
   db.py         all SQL, including migrations
   seed.py       import / export chores.json
+  scoring.py    which chores are due, and how urgent
+  fitting.py    who does what, when, within each person's weekend hours
+  jobs.py       ties it together (dry runs today; the weekly run later)
   cli.py        the `planner` command
   migrations/   schema changes, applied in name order by `planner migrate`
 tests/          pytest; database tests need a throwaway MariaDB (see below)
@@ -21,7 +24,7 @@ deploy/         compose template + .env.example for the deployment folder
 chores.json     seed data, loaded once with `planner import`
 ```
 
-Later phases add `scoring.py`, `fitting.py`, `calendars.py`, `jobs.py` (see DESIGN.md §10).
+Later phases add `calendars.py` (Nextcloud) and the scheduler (see DESIGN.md §10).
 
 ## Development
 
@@ -54,12 +57,18 @@ docker rm -f chore-test-db
 
 ```
 planner migrate                          create / upgrade tables
-planner import chores.json               load seed data (adds missing chores only)
+planner import chores.json [--update] [--retire]
+                                         load seed data: adds new chores; --update also applies
+                                         changes to existing chores/people; --retire switches off
+                                         chores missing from the file (history is kept)
 planner export out.json                  snapshot the database as JSON
 planner chore list [--all]               show the catalog
 planner chore add <id> name=... category=home|garden type=recurring|one_off [more fields]
 planner chore set <id> key=value ...     e.g. interval=7,10,14 duration_h=1.5 priority=3
                                               assignee=nicolas|anna|either|both outdoor=yes needs=a,b
+planner plan --dry-run [--date YYYY-MM-DD] [--weeks N]
+                                         print the coming weekend's plan (and the next N-1,
+                                         assuming planned chores get done); writes nothing
 ```
 
 `none` clears a field (`assignee=none`, `needs=none`).

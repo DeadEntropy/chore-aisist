@@ -1,6 +1,6 @@
 import pytest
 
-from planner.cli import parse_fields
+from planner.cli import build_parser, parse_fields
 
 
 def test_parse_fields():
@@ -21,3 +21,13 @@ def test_parse_fields_booleans():
     assert parse_fields(["outdoor=no", "active=YES"]) == {"outdoor": False, "active": True}
     with pytest.raises(ValueError):
         parse_fields(["active=ture"])
+
+
+@pytest.mark.parametrize("weeks", ["0", "-2"])
+def test_plan_rejects_nonpositive_weeks(weeks):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["plan", "--dry-run", "--weeks", weeks])
+
+
+def test_plan_accepts_weeks():
+    assert build_parser().parse_args(["plan", "--dry-run", "--weeks", "3"]).weeks == 3

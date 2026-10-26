@@ -76,8 +76,10 @@ Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, read-only)
 
 ## 5. Data model
 
-Everything lives in the `chore-aisist-db` MariaDB database. `chores.json` in this repo is only the **seed**: it is
-imported once (`planner import chores.json`) and after that the database is the source of truth.
+Everything lives in the `chore-aisist-db` MariaDB database. `chores.json` in this repo is the **seed**: `planner
+import chores.json` adds new chores; `--update` also brings existing chores and people in line with the file, and
+`--retire` switches off (never deletes) chores no longer in it, so the file can keep being edited and re-synced.
+Edits made with `planner chore set` are overwritten by the next `--update` if the file disagrees.
 `planner export` writes the current catalog back out as JSON for a readable snapshot.
 
 ```sql
@@ -173,6 +175,24 @@ score = urgency * priority
 
 Before scoring, find the **next available weekend** after this one (skipping weekends blocked by travel). If a chore would pass `max` before that next available weekend, bump its score as if it were overdue now. This front-loads work before a trip and naturally produces a catch-up plan afterwards.
 
+Decided for phase 1:
+
+- Never-done recurring chores count as if last done `max` days before they were added: fully due (urgency 1.0) at
+  first, then growing like any overdue chore, so they can't be overtaken by one-offs forever.
+- Degenerate windows (`min = target` or `target = max`) are handled without division by zero; an incomplete interval counts as "needs details".
+- **One-off chores** have no window: urgency starts at **0.5** when the chore is added and grows by **0.2 per week**
+  waiting (`score = urgency × priority`), so a neglected one-off overtakes a fully-due recurring chore after ~2.5 weeks.
+- `needs`: a job whose needs aren't done yet can still be planned if every pending need is planned **earlier the same
+  weekend** (buy Saturday morning, do the job that afternoon or Sunday). Pending needs inherit the job's score when
+  it's higher (all the way down a chain), come right before the chores waiting on them in the ordering, and take
+  the earliest free slot so the job has room after them. Circular needs are excluded with a reason. If the need doesn't fit, neither does
+  the job.
+  When a **recurring** job needs another **recurring** chore, the need only counts if it was done *since the job was
+  last done* (a fresh mulch order
+  before each yearly re-mulch). A done one-off need stays met.
+- Chores missing duration, priority, assignee (or interval, for recurring) are not planned and are listed as
+  "needs details".
+
 ### 6.3 Capacity
 
 For each person and each weekend day:
@@ -184,15 +204,32 @@ available_h = weekend_hours share for that day
 
 Fully blocked weekends (travel) have zero capacity.
 
+Implemented as **time slots** rather than subtracting event hours from the budget:
+
+- Chores can be placed between **08:00 and 18:00** on Saturday and Sunday.
+- Each person's busy events are removed from that window. Calendar → person: Nicolas → Nicolas, Anna → Anna,
+  Family and School → both.
+- A person's chores never exceed their `weekend_hours` budget for the weekend (6 h each to start).
+
 ### 6.4 Fitting
 
-1. Drop chores whose `needs` aren't all done yet, then sort eligible chores by `score` descending.
+1. Sort eligible chores by `score` descending, each one right after any pending needs it waits for (see §6.1:
+   a job whose needs aren't done is still eligible if they can be planned earlier the same weekend).
 2. For each chore, assign it to the eligible person (per `assignee`) with the most remaining capacity on a suitable day.
 3. Outdoor chores go to the day with the better forecast; if both days are bad, they stay in the plan but are flagged "weather permitting".
 4. Skip a chore if no one has enough remaining capacity; it will score higher next week.
 5. Mark the lowest-scored scheduled chores as "skippable if rushed" in the brief.
 
 Greedy fitting is good enough for a handful of chores per weekend; revisit only if results look wrong.
+
+Placement details (phase 1): `either` goes to the person with the most budget left; `both` needs a slot where both
+are free and uses both budgets. Each chore goes in the first long-enough free slot on the day where that person (or
+pair) has the most free time left, which spreads work over the two days. Chores appear in the Chores calendar as
+**timed events** (e.g. `Sat 09:00–10:30 🧹 Mow the lawn (Nicolas)`).
+
+`planner plan --dry-run [--date D] [--weeks N]` prints the plan without writing anything; with `--weeks N` it assumes
+each planned chore is done on its day and plans the following weekends too, to show how the backlog is worked off.
+Until calendar integration (phase 2), everyone is treated as free all weekend.
 
 ## 7. CalDAV integration
 
@@ -342,7 +379,6 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - How travel is marked in the calendar (dedicated calendar vs. category/keyword).
 - Whether hired help (e.g. a lawn service) should be modeled as a third "person" with its own schedule.
 - Per-day capacity split (e.g. Saturday lighter when there are kids' events).
-- How `one_off` chores are scored (they have no interval window — e.g. fixed urgency from priority, growing with age).
 
 ## 13. Decisions made
 
