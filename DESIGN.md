@@ -175,6 +175,11 @@ score = urgency * priority
 
 Before scoring, find the **next available weekend** after this one (skipping weekends blocked by travel). If a chore would pass `max` before that next available weekend, bump its score as if it were overdue now. This front-loads work before a trip and naturally produces a catch-up plan afterwards.
 
+Implemented in phase 2: a weekend is **blocked** when everyone is away both days. Chores are scored as of the
+weekend before the next available one: normally that's this weekend; if the following weekend(s) are blocked, it's
+the last blocked one, so whatever would go overdue during the trip scores (and becomes eligible) now. Look-ahead
+reaches up to 6 weeks.
+
 Decided for phase 1:
 
 - Never-done recurring chores count as if last done `max` days before they were added: fully due (urgency 1.0) at
@@ -208,7 +213,11 @@ Implemented as **time slots** rather than subtracting event hours from the budge
 
 - Chores can be placed between **08:00 and 18:00** on Saturday and Sunday.
 - Each person's busy events are removed from that window. Calendar → person: Nicolas → Nicolas, Anna → Anna,
-  Family and School → both.
+  Family and School → both (configurable: `BUSY_CALENDARS`).
+- Timed events block their time **plus a buffer before and after** (`EVENT_BUFFER_MINUTES`, 30 by default).
+  Events marked free (`TRANSP:TRANSPARENT`) or cancelled don't block.
+- **All-day events are ignored**, except travel: an all-day event whose title has a word starting with `travel`,
+  `trip` or `away` (`TRAVEL_KEYWORDS`) blocks every day it covers for that calendar's people (zero capacity).
 - A person's chores never exceed their `weekend_hours` budget for the weekend (6 h each to start).
 
 ### 6.4 Fitting
@@ -229,15 +238,17 @@ pair) has the most free time left, which spreads work over the two days. Chores 
 
 `planner plan --dry-run [--date D] [--weeks N]` prints the plan without writing anything; with `--weeks N` it assumes
 each planned chore is done on its day and plans the following weekends too, to show how the backlog is worked off.
-Until calendar integration (phase 2), everyone is treated as free all weekend.
+It reads the family calendars (phase 2) and prints what blocks each weekend (`Busy:` / `Away:` lines) and when
+travel look-ahead moved the scoring date; `--no-calendar` treats everyone as free. If the calendars can't be read
+(network, certificate, password), the command stops with the reason rather than planning on wrong data.
 
 ## 7. CalDAV integration
 
 All access is as the app's Nextcloud user (`<app-user>`) with an app password (see `CALENDAR.md` for URLs, shares and secrets).
 
-- **Read**: query the shared family calendars (Nicolas, Family, School, Anna) for events in the planning horizon
-  (this weekend + look-ahead), expanding recurring events. Any event overlapping a weekend day reduces capacity;
-  events tagged/categorized as travel (or on a dedicated "Travel" calendar) block the whole weekend.
+- **Read** (phase 2, `calendars.py`): query the shared family calendars (Nicolas, Family, School, Anna) for events
+  in the planning horizon (the planned weekends + 6 weeks of look-ahead), with recurring events expanded. Times are
+  converted to local time (`PLANNER_TIMEZONE`). See §6.3 for what blocks whom.
 - **Write**: one VEVENT per planned chore in the Chores calendar, title `🧹 Mow the lawn (Nicolas)`,
   with a deterministic UID: `chore-{chore_id}-{plan_date}@household-planner`.
   Events only — no VTODOs.

@@ -39,3 +39,15 @@ services:
       DB_USER: chore_aisist
       DB_PASSWORD: ${DB_PASSWORD}
       TZ: America/New_York
+      PLANNER_TIMEZONE: America/New_York
+      CALDAV_URL: https://nextcloud.local/remote.php/dav
+      CALDAV_CA_CERT: /certs/homelab-ca.crt
+      NEXTCLOUD_USER: ${NEXTCLOUD_USER}
+      NEXTCLOUD_APP_PASSWORD: ${NEXTCLOUD_APP_PASSWORD}
+      BUSY_CALENDARS: ${BUSY_CALENDARS}
+      EVENT_BUFFER_MINUTES: ${EVENT_BUFFER_MINUTES:-30}
+      TRAVEL_KEYWORDS: ${TRAVEL_KEYWORDS:-travel,trip,away}
+    extra_hosts:
+      - "nextcloud.local:${NEXTCLOUD_IP}"   # the server may not resolve the name; the cert only covers the name
+    volumes:
+      - ${HOMELAB_CA_CERT}:/certs/homelab-ca.crt:ro   # CA that signed Nextcloud's certificate

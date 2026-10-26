@@ -2,12 +2,12 @@
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pymysql
 
-from planner import db, jobs, seed
+from planner import calendars, db, jobs, seed
 from planner.config import load_settings
 from planner.models import Chore
 
@@ -65,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
     p.add_argument("--date", type=date.fromisoformat, help="plan the weekend on/after this date (YYYY-MM-DD)")
     p.add_argument("--weeks", type=_positive_int, default=1, help="dry run: also plan the following N-1 weekends")
+    p.add_argument("--no-calendar", action="store_true", help="ignore the family calendars (everyone free)")
     p.set_defaults(func=cmd_plan)
     return parser
 
@@ -131,15 +132,39 @@ def cmd_plan(conn, args, settings):
     if not args.dry_run:
         raise ValueError("Writing plans to the calendar comes with calendar integration; use --dry-run")
     saturday = jobs.next_saturday(args.date or date.today())
+    events, buffer = None, 0
+    if args.no_calendar:
+        print("Calendars ignored (--no-calendar): everyone is treated as free.\n")
+    elif settings.calendar is None:
+        print("Calendars not configured (CALDAV_URL not set): everyone is treated as free.\n")
+    else:
+        start, end = jobs.calendar_range(saturday, args.weeks)
+        try:
+            events = calendars.fetch_events(settings.calendar, start, end)
+        except Exception as exc:          # network, TLS, auth: report it plainly, don't plan on wrong data
+            raise ValueError(f"Couldn't read the calendars ({type(exc).__name__}: {exc}). "
+                             "Use --no-calendar to plan without them.") from exc
+        buffer = settings.calendar.buffer_minutes
+
     shown: set[tuple[str, str]] = set()
-    for plan, excluded in jobs.dry_run(conn, saturday, args.weeks):
-        new = [(c, why) for c, why in excluded if (c.id, why) not in shown]   # each reason once, when it appears
+    for result in jobs.dry_run(conn, saturday, args.weeks, events, buffer):
+        new = [(c, why) for c, why in result.excluded if (c.id, why) not in shown]   # each reason once
         shown.update((c.id, why) for c, why in new)
-        print_plan(plan, new)
+        print_plan(result, new)
 
 
-def print_plan(plan, excluded) -> None:
+def print_plan(result, excluded) -> None:
+    plan = result.plan
     print(f"=== Weekend of {plan.saturday:%a %d %b %Y}")
+    for e in result.events:
+        who = " & ".join(p.capitalize() for p in e.people)
+        if e.travel:
+            last = (e.end - timedelta(days=1)).date()
+            print(f"  Away: {e.start:%a %d %b}–{last:%a %d %b}  {e.summary}  ({who})")
+        else:
+            print(f"  Busy: {e.start:%a %H:%M}-{e.end:%H:%M}  {e.summary}  ({who})")
+    if result.scored_as_of:
+        print(f"  Look-ahead: away on the following weekend(s), so chores are scored as of {result.scored_as_of:%a %d %b}")
     hours: dict[str, float] = {}
     day = None
     for item in plan.items:

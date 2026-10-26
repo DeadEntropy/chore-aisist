@@ -39,6 +39,17 @@ class Completion:
 
 
 @dataclass
+class CalEvent:
+    """A calendar event that blocks people, in local time. Travel events cover whole days (end exclusive)."""
+    people: list[str]
+    summary: str
+    start: datetime
+    end: datetime
+    all_day: bool = False
+    travel: bool = False
+
+
+@dataclass
 class Busy:
     """A span of time when a person can't do chores (from their calendars)."""
     person_id: str
