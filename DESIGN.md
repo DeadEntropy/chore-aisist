@@ -185,8 +185,9 @@ Decided for phase 1:
   weekend** (buy Saturday morning, do the job that afternoon or Sunday). Pending needs inherit the job's score when
   it's higher, and take the earliest free slot so the job has room after them. If the need doesn't fit, neither does
   the job.
-  For a **recurring** job, a need only counts if it was done *since the job was last done* (a fresh mulch order
-  before each yearly re-mulch).
+  When a **recurring** job needs another **recurring** chore, the need only counts if it was done *since the job was
+  last done* (a fresh mulch order
+  before each yearly re-mulch). A done one-off need stays met.
 - Chores missing duration, priority, assignee (or interval, for recurring) are not planned and are listed as
   "needs details".
 

@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("plan", help="plan the coming weekend")
     p.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
     p.add_argument("--date", type=date.fromisoformat, help="plan the weekend on/after this date (YYYY-MM-DD)")
-    p.add_argument("--weeks", type=int, default=1, help="dry run: also plan the following N-1 weekends")
+    p.add_argument("--weeks", type=_positive_int, default=1, help="dry run: also plan the following N-1 weekends")
     p.set_defaults(func=cmd_plan)
     return parser
 
@@ -131,8 +131,11 @@ def cmd_plan(conn, args, settings):
     if not args.dry_run:
         raise ValueError("Writing plans to the calendar comes with calendar integration; use --dry-run")
     saturday = jobs.next_saturday(args.date or date.today())
-    for week, (plan, excluded) in enumerate(jobs.dry_run(conn, saturday, args.weeks)):
-        print_plan(plan, excluded if week == 0 else [])
+    shown: set[tuple[str, str]] = set()
+    for plan, excluded in jobs.dry_run(conn, saturday, args.weeks):
+        new = [(c, why) for c, why in excluded if (c.id, why) not in shown]   # each reason once, when it appears
+        shown.update((c.id, why) for c, why in new)
+        print_plan(plan, new)
 
 
 def print_plan(plan, excluded) -> None:
@@ -159,6 +162,13 @@ def print_plan(plan, excluded) -> None:
 
 
 # --- helpers ----------------------------------------------------------------
+
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
+
 
 def parse_fields(pairs: list[str]) -> dict:
     """Turn ['duration_h=1.5', 'interval=7,10,14', 'needs=a,b'] into chore column values."""

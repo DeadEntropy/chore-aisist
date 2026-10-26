@@ -100,6 +100,15 @@ def test_recurring_job_needs_a_fresh_need_each_round():
     assert eligible[0].waits_for == []
 
 
+def test_recurring_job_keeps_a_done_one_off_need():
+    trim = recurring("trim", lo=7, mid=10, hi=14, needs=["buy-trimmer"])
+    buy = one_off("buy-trimmer")
+    last = {"trim": ago(20), "buy-trimmer": ago(60)}       # bought once, long before the last trim
+    eligible, excluded = score_chores([trim, buy], last, TODAY)
+    assert [s.chore.id for s in eligible] == ["trim"]
+    assert eligible[0].waits_for == [] and excluded == []
+
+
 def test_needs_met_once_done():
     eligible, _ = score_chores([one_off("job", needs=["buy"])], {"buy": ago(1)}, TODAY)
     assert [s.chore.id for s in eligible] == ["job"]
