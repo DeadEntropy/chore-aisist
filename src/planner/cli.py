@@ -8,7 +8,7 @@ from pathlib import Path
 import pymysql
 
 from planner import calendars, db, jobs, seed
-from planner.config import load_settings
+from planner.config import load_calendar_settings, load_settings
 from planner.models import Chore
 
 NULLS = {"", "none", "null"}
@@ -133,24 +133,34 @@ def cmd_plan(conn, args, settings):
         raise ValueError("Writing plans to the calendar comes with calendar integration; use --dry-run")
     saturday = jobs.next_saturday(args.date or date.today())
     events, buffer = None, 0
+    cal = None if args.no_calendar else load_calendar_settings()
     if args.no_calendar:
         print("Calendars ignored (--no-calendar): everyone is treated as free.\n")
-    elif settings.calendar is None:
+    elif cal is None:
         print("Calendars not configured (CALDAV_URL not set): everyone is treated as free.\n")
     else:
+        check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
         start, end = jobs.calendar_range(saturday, args.weeks)
         try:
-            events = calendars.fetch_events(settings.calendar, start, end)
+            events = calendars.fetch_events(cal, start, end)
         except Exception as exc:          # network, TLS, auth: report it plainly, don't plan on wrong data
             raise ValueError(f"Couldn't read the calendars ({type(exc).__name__}: {exc}). "
                              "Use --no-calendar to plan without them.") from exc
-        buffer = settings.calendar.buffer_minutes
+        buffer = cal.buffer_minutes
 
     shown: set[tuple[str, str]] = set()
     for result in jobs.dry_run(conn, saturday, args.weeks, events, buffer):
         new = [(c, why) for c, why in result.excluded if (c.id, why) not in shown]   # each reason once
         shown.update((c.id, why) for c, why in new)
         print_plan(result, new)
+
+
+def check_calendar_people(calendar_people: set[str], known: set[str]) -> None:
+    """Stop if BUSY_CALENDARS names someone who isn't a person in the database: their events would be ignored."""
+    unknown = sorted(calendar_people - known)
+    if unknown:
+        raise ValueError(f"BUSY_CALENDARS names unknown people: {', '.join(unknown)} "
+                         f"(known: {', '.join(sorted(known))})")
 
 
 def print_plan(result, excluded) -> None:

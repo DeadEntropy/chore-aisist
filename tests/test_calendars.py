@@ -86,3 +86,34 @@ def test_parse_busy_calendars():
         parse_busy_calendars("family")
     with pytest.raises(ValueError):
         parse_busy_calendars("")
+
+
+def test_fetch_events_uses_timeout_and_local_time_bounds(monkeypatch):
+    import sys
+    import types
+
+    from planner.calendars import fetch_events
+    from planner.config import CalendarSettings
+
+    seen = {}
+
+    class FakeCalendar:
+        def search(self, **kw):
+            seen["search"] = kw
+            return []
+
+    class FakeClient:
+        def __init__(self, **kw):
+            seen["client"] = kw
+
+        def calendar(self, url):
+            return FakeCalendar()
+
+    monkeypatch.setitem(sys.modules, "caldav", types.SimpleNamespace(DAVClient=FakeClient))
+    settings = CalendarSettings(url="https://nc/dav", user="app", password="p", ca_cert=True,
+                                calendars=(("family", ("nicolas",)),), buffer_minutes=30,
+                                travel_keywords=KEYWORDS, timezone="America/New_York", timeout_seconds=12)
+    fetch_events(settings, date(2026, 10, 31), date(2026, 11, 2))
+    assert seen["client"]["timeout"] == 12
+    assert seen["search"]["start"] == datetime(2026, 10, 31, tzinfo=TZ)
+    assert seen["search"]["start"].utcoffset() == timedelta(hours=-4)        # EDT, not the machine's zone

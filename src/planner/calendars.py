@@ -16,13 +16,13 @@ def fetch_events(settings: CalendarSettings, start: date, end: date) -> list[Cal
     import caldav    # imported here so the rest of the planner works without it being reachable
 
     client = caldav.DAVClient(url=settings.url, username=settings.user, password=settings.password,
-                              ssl_verify_cert=settings.ca_cert)
+                              ssl_verify_cert=settings.ca_cert, timeout=settings.timeout_seconds)
     tz = ZoneInfo(settings.timezone)
     events: list[CalEvent] = []
     for uri, people in settings.calendars:
         calendar = client.calendar(url=f"{settings.url}/calendars/{settings.user}/{uri}/")
-        found = calendar.search(event=True, start=datetime.combine(start, time(0)),
-                                end=datetime.combine(end, time(0)), expand=True)
+        found = calendar.search(event=True, start=datetime.combine(start, time(0), tzinfo=tz),
+                                end=datetime.combine(end, time(0), tzinfo=tz), expand=True)
         for item in found:
             event = parse_event(item.icalendar_component, list(people), tz, settings.travel_keywords)
             if event is not None:

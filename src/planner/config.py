@@ -16,6 +16,10 @@ class CalendarSettings:
     buffer_minutes: int                        # added before and after every timed event
     travel_keywords: tuple[str, ...]           # all-day events whose title starts a word with one of these
     timezone: str
+    timeout_seconds: int = 30                  # per CalDAV request, so a stuck server can't hang the planner
+
+    def people(self) -> set[str]:
+        return {p for _, names in self.calendars for p in names}
 
 
 @dataclass(frozen=True)
@@ -25,7 +29,6 @@ class Settings:
     db_name: str
     db_user: str
     db_password: str
-    calendar: CalendarSettings | None = None   # None when CalDAV isn't configured
 
 
 def load_settings() -> Settings:
@@ -39,27 +42,36 @@ def load_settings() -> Settings:
         db_name=os.environ.get("DB_NAME", "chores"),
         db_user=os.environ.get("DB_USER", "chore_aisist"),
         db_password=password,
-        calendar=_calendar_settings(),
     )
 
 
-def _calendar_settings() -> CalendarSettings | None:
+def load_calendar_settings() -> CalendarSettings | None:
+    """CalDAV settings, or None when CALDAV_URL isn't set. Only called by commands that read the calendars,
+    so a calendar misconfiguration never blocks database-only commands."""
+    load_dotenv()
     url = os.environ.get("CALDAV_URL")
     if not url:
         return None
     missing = [k for k in ("NEXTCLOUD_USER", "NEXTCLOUD_APP_PASSWORD", "BUSY_CALENDARS") if not os.environ.get(k)]
     if missing:
         raise ValueError(f"CALDAV_URL is set but {', '.join(missing)} is not (see .env.example)")
+    buffer = int(os.environ.get("EVENT_BUFFER_MINUTES", "30"))
+    if buffer < 0:
+        raise ValueError(f"EVENT_BUFFER_MINUTES must be 0 or more, got {buffer}")
+    timeout = int(os.environ.get("CALDAV_TIMEOUT_SECONDS", "30"))
+    if timeout <= 0:
+        raise ValueError(f"CALDAV_TIMEOUT_SECONDS must be more than 0, got {timeout}")
     return CalendarSettings(
         url=url.rstrip("/"),
         user=os.environ["NEXTCLOUD_USER"],
         password=os.environ["NEXTCLOUD_APP_PASSWORD"],
         ca_cert=os.environ.get("CALDAV_CA_CERT") or True,
         calendars=parse_busy_calendars(os.environ["BUSY_CALENDARS"]),
-        buffer_minutes=int(os.environ.get("EVENT_BUFFER_MINUTES", "30")),
+        buffer_minutes=buffer,
         travel_keywords=tuple(
             k.strip().lower() for k in os.environ.get("TRAVEL_KEYWORDS", "travel,trip,away").split(",") if k.strip()),
         timezone=os.environ.get("PLANNER_TIMEZONE", "America/New_York"),
+        timeout_seconds=timeout,
     )
 
 
