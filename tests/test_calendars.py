@@ -4,12 +4,11 @@ from zoneinfo import ZoneInfo
 import icalendar
 import pytest
 
-from planner.calendars import busy_from_events, is_travel, parse_event
-from planner.config import parse_busy_calendars
-from planner.models import CalEvent
+from planner.calendars import classify, matches, parse_event
+from planner.config import KEYWORD_SETTINGS, parse_busy_calendars
 
 TZ = ZoneInfo("America/New_York")
-KEYWORDS = ("travel", "trip", "away")
+KEYWORDS = {kind: tuple(default.split(",")) for kind, (_, default) in KEYWORD_SETTINGS.items()}
 
 
 def vevent(**props) -> icalendar.Event:
@@ -23,7 +22,7 @@ def vevent(**props) -> icalendar.Event:
 def test_timed_event_in_new_york_time():
     e = parse_event(vevent(summary=":Tennis", dtstart=";TZID=America/New_York:20261031T073000",
                            dtend=";TZID=America/New_York:20261031T090000"), ["anna"], TZ, KEYWORDS)
-    assert (e.start, e.end, e.travel) == (datetime(2026, 10, 31, 7, 30), datetime(2026, 10, 31, 9, 0), False)
+    assert (e.start, e.end, e.kind) == (datetime(2026, 10, 31, 7, 30), datetime(2026, 10, 31, 9, 0), "busy")
 
 
 def test_utc_event_is_converted_to_local():
@@ -46,31 +45,28 @@ def test_cancelled_and_free_events_are_ignored(props):
     assert parse_event(ev, ["nicolas"], TZ, KEYWORDS) is None
 
 
-def test_all_day_events_ignored_unless_travel():
+def test_all_day_events_ignored_unless_a_keyword():
     birthday = vevent(summary=":Lucy's birthday", dtstart=";VALUE=DATE:20261031", dtend=";VALUE=DATE:20261101")
     assert parse_event(birthday, ["nicolas", "anna"], TZ, KEYWORDS) is None
     trip = vevent(summary=":Trip to Paris", dtstart=";VALUE=DATE:20261106", dtend=";VALUE=DATE:20261110")
     e = parse_event(trip, ["nicolas"], TZ, KEYWORDS)
-    assert e.travel and e.start == datetime(2026, 11, 6) and e.end == datetime(2026, 11, 10)
+    assert e.kind == "away" and e.start == datetime(2026, 11, 6) and e.end == datetime(2026, 11, 10)
 
 
-@pytest.mark.parametrize("title, expected", [
-    ("Travel", True), ("Trip to Paris", True), ("Away – conference", True), ("Travelling to NY", True),
-    ("Business TRIP", True), ("Road-trip", True), ("Giveaway party", False), ("Birthday", False),
+@pytest.mark.parametrize("title, all_day, kind", [
+    ("Travel", True, "away"), ("Trip to Paris", True, "away"), ("Away – conference", True, "away"),
+    ("Travelling to NY", True, "away"), ("Road-trip", True, "away"), ("Giveaway party", True, None),
+    ("Day off", True, "extra_day"), ("Thanksgiving holiday", True, "extra_day"), ("Chores day", True, "extra_day"),
+    ("No chores", True, "no_chores"), ("Birthday", True, None),
+    ("Chores", False, "extra_time"), ("Chore time", False, "extra_time"), ("No chores", False, "busy"),
+    ("Holiday party", False, "busy"), ("Tennis", False, "busy"),
 ])
-def test_travel_keywords(title, expected):
-    assert is_travel(title, KEYWORDS) is expected
+def test_classify(title, all_day, kind):
+    assert classify(title, all_day, KEYWORDS) == kind
 
 
-def test_buffer_on_timed_events_but_not_travel():
-    party = CalEvent(["nicolas", "anna"], "Party", datetime(2026, 10, 31, 14), datetime(2026, 10, 31, 16))
-    trip = CalEvent(["anna"], "Trip", datetime(2026, 11, 7), datetime(2026, 11, 9), travel=True)
-    busy = busy_from_events([party, trip], 30)
-    spans = {(b.person_id, b.start, b.end) for b in busy}
-    assert ("nicolas", datetime(2026, 10, 31, 13, 30), datetime(2026, 10, 31, 16, 30)) in spans
-    assert ("anna", datetime(2026, 10, 31, 13, 30), datetime(2026, 10, 31, 16, 30)) in spans
-    assert ("anna", datetime(2026, 11, 7), datetime(2026, 11, 9)) in spans
-    assert len(busy) == 3
+def test_keyword_matches_start_of_word():
+    assert matches("Business TRIP", ("trip",)) and not matches("Giveaway", ("away",))
 
 
 def test_parse_busy_calendars():
@@ -106,7 +102,7 @@ def test_fetch_events_uses_timeout_and_local_time_bounds(monkeypatch):
     monkeypatch.setitem(sys.modules, "caldav", types.SimpleNamespace(DAVClient=FakeClient))
     settings = CalendarSettings(url="https://nc/dav", user="app", password="p", ca_cert=True,
                                 calendars=(("family", ("nicolas",)),), buffer_minutes=30,
-                                travel_keywords=KEYWORDS, timezone="America/New_York", timeout_seconds=12)
+                                keywords=KEYWORDS, timezone="America/New_York", timeout_seconds=12)
     fetch_events(settings, date(2026, 10, 31), date(2026, 11, 2))
     assert seen["client"]["timeout"] == 12
     assert seen["search"]["start"] == datetime(2026, 10, 31, tzinfo=TZ)

@@ -13,18 +13,16 @@
     "assignee": "nicolas | anna | either | both; null if unknown",
     "outdoor": "true if done outside; outdoor chores are weather-sensitive (rain moves them)",
     "needs": "Chore ids that must be done first (e.g. a 'Buy …' chore); empty list if none",
-    "people": "Who does chores and how many hours of chores per weekend"
+    "people": "Who does chores"
   },
   "people": [
     {
       "id": "nicolas",
-      "name": "Nicolas",
-      "weekend_hours": 6
+      "name": "Nicolas"
     },
     {
       "id": "anna",
-      "name": "Anna",
-      "weekend_hours": 6
+      "name": "Anna"
     }
   ],
   "chores": [

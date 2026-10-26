@@ -1,0 +1,165 @@
+# Calendar guide: how the planner reads your calendars
+
+This is the user guide: what to put in your calendar so the planner books chores at the right times, and how to
+connect another calendar (e.g. work). For the technical side (CalDAV, shares, credentials) see `CALENDAR.md`.
+
+The planner only **reads** your calendars. It never changes your events. (From phase 3 it writes its own plan to
+the separate **Chores** calendar, which you can see but not edit.)
+
+## 1. The basics
+
+- **Chore time by default:** Saturday and Sunday, 08:00–18:00, for both of you.
+- **Every timed event blocks its time, plus 30 minutes before and after**, for the people that calendar belongs to.
+  A 14:00–16:00 party blocks 13:30–16:30.
+- **All-day events are ignored**, unless their title contains one of the keywords below. Birthdays, "No school",
+  holidays without a keyword: no effect.
+- Any free time left in the chore windows can get chores. **There is no hours limit**: if you want time kept free,
+  put it in your calendar.
+
+Which calendar blocks whom:
+
+| Calendar | Blocks |
+|---|---|
+| Nicolas | Nicolas |
+| Anna | Anna |
+| Family | both |
+| School | both |
+
+So: put an event on **your own** calendar if it's only about you, and on **Family** if it's about both of you.
+
+## 2. Adding and removing chore time
+
+Use these words in the **event title**. They're not case-sensitive and must start a word: "Trip to Paris" and
+"Business TRIP" match `trip`; "Giveaway" does not match `away`.
+
+| You want to… | Put this in the calendar | Example |
+|---|---|---|
+| **Add a whole day** of chore time (long weekend, day off) | **All-day** event with `Day off` or `Holiday` in the title | All-day "Day off" on Monday 3 Nov → Monday 08:00–18:00 is chore time |
+| **Add a few hours** on any day | **Timed** event with `Chore` / `Chores` in the title | "Chores" Thursday 14:00–18:00 on your calendar → you're available Thursday afternoon |
+| **Remove a whole day** (no chores, but you're home) | **All-day** event with `No chores` in the title | All-day "No chores" on Sunday |
+| **Mark yourself away** (travel) | **All-day** event with `Travel`, `Trip` or `Away` in the title, covering every day you're gone | All-day "Trip to NYC" Fri–Mon |
+| **Block a few hours** | Any **timed** event, whatever the title | "Lunch with Joe" Sat 12:00–14:00 |
+| **Keep an event without it blocking you** | Set the event to **Free** ("Show as: free" / "Free/Busy: free") in your calendar app | A reminder you don't need to be home for |
+
+What each one does in more detail:
+- **"Day off" / "Holiday" (all-day):** the whole day becomes chore time, 08:00–18:00, for that calendar's people.
+  Your other events that day still block their time.
+- **"Chores" (timed):** exactly that time becomes chore time for that calendar's people. If another event overlaps
+  it, the overlap is still blocked.
+- **"No chores" (all-day):** no chores that day, even on a Saturday or a day off.
+- **Travel (all-day):** you're away every day the event covers, so no chores for you.
+- **Look-ahead:** if **neither** of you has chore time on the next chore days (both away, a "No chores" weekend, or a
+  weekend fully booked), the planner brings forward the chores that would become overdue by then and does them first.
+- **Cancelled events** never block.
+
+**Which rule wins** when several apply to the same day:
+1. "No chores" or travel → no chore time that day, whatever else is there.
+2. Otherwise, the default windows plus any "Day off" / "Chores" time…
+3. …minus every busy timed event (with its 30-minute buffer).
+
+### Things to watch out for
+
+- **"Holiday in Spain"** contains `holiday`, so it counts as a *day off*, not as being away. For travel, use a travel
+  word: "**Trip** to Spain", "**Away** – Spain".
+- **"No chores"** wins over "Chores": a timed "No chores" event just blocks its time.
+- **A trip on the Family calendar marks both of you away**, and a kid's "School trip" on the School calendar does too.
+  Put kids' trips as *timed* events, or leave out the travel word, if you're both home.
+- **A multi-day timed event** (e.g. camping Friday 17:00 → Sunday 19:00) blocks everything in between, just like a
+  trip.
+
+### Checking what the planner sees
+
+```bash
+cd <deploy-dir>/chore-aisist
+docker compose run --rm chore-aisist plan --dry-run
+```
+
+Each 7-day period starts with the events that affect chore time:
+```
+=== Tue 27 Oct – Mon 02 Nov 2026
+  Busy: Sat 31 Oct 09:15-10:30  Swimming  (Nicolas & Anna)
+  Day off: Mon 02 Nov  Day off  (Nicolas)
+  Chore time: Thu 29 Oct 14:00-18:00  Chores  (Nicolas)
+  Away: Fri 06 Nov–Sun 08 Nov  Trip to NYC  (Nicolas & Anna)
+```
+If an event you expected isn't listed, or is listed under the wrong label, check its title against the keywords
+above. Busy events are only listed on days that have chore time.
+
+## 3. Connecting another calendar (e.g. your work calendar)
+
+Do this when you want the planner to avoid times on a calendar it doesn't read yet. Note that with the default
+windows (weekends only), a work calendar only matters on weekends, or on weekdays where you've added chore time
+("Chores" / "Day off").
+
+### Step 1: let the app read the calendar
+
+The app reads calendars as its own Nextcloud user, **`ChoreAisist`**. Which step you need depends on where the
+calendar lives.
+
+**A. The calendar is in Nextcloud** (you created it there, or it syncs there from your phone):
+1. Open Nextcloud in a browser → **Calendar**.
+2. Next to the calendar, open the **⋯** menu → **Share**.
+3. Type `ChoreAisist` and pick the user.
+4. **Untick "Can edit"**: the planner only needs to read it.
+
+**B. The calendar is outside Nextcloud** (Outlook / Exchange / Google work calendar):
+1. In your work calendar, find its **ICS / iCal publish link** (in Outlook: Settings → Calendar → Shared calendars →
+   Publish a calendar → "ICS" link; in Google: calendar settings → "Secret address in iCal format"). Treat the
+   link like a password.
+2. Log in to Nextcloud **as `ChoreAisist`** (its login password is in the deploy folder's `.env`).
+3. **Calendar** → **+ New calendar** → **New subscription from link (read-only)** → paste the link.
+4. Nextcloud refreshes subscriptions **once a week** by default, which is too slow for a work calendar. An admin can
+   make it hourly:
+   ```bash
+   docker exec -u www-data nextcloud php occ config:app:set dav calendarSubscriptionRefreshRate --value "PT1H"
+   ```
+
+*Check it in step 2: if the subscription doesn't appear in `planner calendars`, tell Claude Code. Nextcloud's
+handling of subscriptions over CalDAV is the one part of this guide not tested yet.*
+
+### Step 2: find the calendar's name
+
+```bash
+docker compose run --rm chore-aisist calendars
+```
+```
+URI (use this in BUSY_CALENDARS)  NAME                  BLOCKS
+family_shared_by_<owner>          Family (<owner>)      nicolas, anna
+work_shared_by_<owner>            Work (<owner>)        (not used)
+...
+```
+The first column is the name the planner needs. `(not used)` means it isn't connected yet.
+
+### Step 3: say whose time it blocks
+
+In the deploy folder's `.env`, add the calendar to `BUSY_CALENDARS`, with `=` and the people it blocks:
+```
+BUSY_CALENDARS=…existing entries…;work_shared_by_<owner>=nicolas
+```
+- Separate calendars with `;`, and people with `,` (`=nicolas,anna` for both).
+- People are `nicolas` and `anna`. A typo stops the planner with an error rather than silently ignoring it.
+
+### Step 4: check
+
+```bash
+docker compose run --rm chore-aisist calendars        # BLOCKS should now show "nicolas"
+docker compose run --rm chore-aisist plan --dry-run   # work events show up as "Busy:" lines on chore days
+```
+
+**To disconnect a calendar,** remove its entry from `BUSY_CALENDARS`. You can also remove the share or subscription
+in Nextcloud.
+
+## 4. Settings
+
+All in the deploy folder's `.env`. Changes apply the next time the planner runs.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `CHORE_WINDOWS` | `sat 08:00-18:00; sun 08:00-18:00` | Default chore time, every week, for both of you. Add a regular slot with e.g. `; wed 18:00-20:00` |
+| `EXTRA_DAY_WINDOW` | `08:00-18:00` | Chore time on a "Day off" / "Holiday" |
+| `EVENT_BUFFER_MINUTES` | `30` | Margin blocked before and after every timed event |
+| `BUSY_CALENDARS` | the 4 family calendars | Which calendars are read, and whom they block |
+| `DAY_OFF_KEYWORDS` | `day off,holiday` | All-day titles that add a whole day |
+| `CHORE_TIME_KEYWORDS` | `chore` | Timed titles that add that time (also matches "Chores") |
+| `NO_CHORES_KEYWORDS` | `no chores` | All-day titles that remove a day |
+| `TRAVEL_KEYWORDS` | `travel,trip,away` | All-day titles that mean away |

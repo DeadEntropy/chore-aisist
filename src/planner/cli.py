@@ -8,7 +8,7 @@ from pathlib import Path
 import pymysql
 
 from planner import calendars, db, jobs, seed
-from planner.config import load_calendar_settings, load_settings
+from planner.config import load_calendar_settings, load_planning_settings, load_settings
 from planner.models import Chore
 
 NULLS = {"", "none", "null"}
@@ -61,10 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("fields", nargs="+", metavar="key=value")
     p.set_defaults(func=cmd_chore_set)
 
-    p = sub.add_parser("plan", help="plan the coming weekend")
+    p = sub.add_parser("calendars", help="list the calendars the app can read, and who each one blocks")
+    p.set_defaults(func=cmd_calendars)
+
+    p = sub.add_parser("plan", help="plan the next 7 days")
     p.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
-    p.add_argument("--date", type=date.fromisoformat, help="plan the weekend on/after this date (YYYY-MM-DD)")
-    p.add_argument("--weeks", type=_positive_int, default=1, help="dry run: also plan the following N-1 weekends")
+    p.add_argument("--date", type=date.fromisoformat, help="first day to plan (YYYY-MM-DD); default tomorrow")
+    p.add_argument("--weeks", type=_positive_int, default=1, help="dry run: plan N consecutive 7-day periods")
     p.add_argument("--no-calendar", action="store_true", help="ignore the family calendars (everyone free)")
     p.set_defaults(func=cmd_plan)
     return parser
@@ -128,28 +131,51 @@ def cmd_chore_set(conn, args, settings):
     print(f"Updated {args.id}")
 
 
+def cmd_calendars(conn, args, settings):
+    cal = load_calendar_settings()
+    if cal is None:
+        raise ValueError("Calendars not configured (CALDAV_URL not set)")
+    try:
+        found = calendars.list_calendars(cal)
+    except Exception as exc:
+        raise ValueError(f"Couldn't read the calendars ({type(exc).__name__}: {exc})") from exc
+    print(calendar_table(found, dict(cal.calendars)))
+
+
+def calendar_table(found: list[tuple[str, str]], configured: dict[str, tuple[str, ...]]) -> str:
+    rows = [["URI (use this in BUSY_CALENDARS)", "NAME", "BLOCKS"]]
+    for uri, name in found:
+        rows.append([uri, name, ", ".join(configured[uri]) if uri in configured else "(not used)"])
+    for uri in configured:
+        if uri not in dict(found):
+            rows.append([uri, "?", "in BUSY_CALENDARS but not visible to the app: check the share"])
+    widths = [max(len(r[i]) for r in rows) for i in range(2)]
+    return "\n".join(f"{r[0].ljust(widths[0])}  {r[1].ljust(widths[1])}  {r[2]}" for r in rows)
+
+
 def cmd_plan(conn, args, settings):
     if not args.dry_run:
         raise ValueError("Writing plans to the calendar comes with calendar integration; use --dry-run")
-    saturday = jobs.next_saturday(args.date or date.today())
-    events, buffer = None, 0
+    start = args.date or date.today() + timedelta(days=1)
+    planning = load_planning_settings()
+    events, buffer = [], 0
     cal = None if args.no_calendar else load_calendar_settings()
     if args.no_calendar:
-        print("Calendars ignored (--no-calendar): everyone is treated as free.\n")
+        print("Calendars ignored (--no-calendar): only the default chore windows, everyone free.\n")
     elif cal is None:
-        print("Calendars not configured (CALDAV_URL not set): everyone is treated as free.\n")
+        print("Calendars not configured (CALDAV_URL not set): only the default chore windows, everyone free.\n")
     else:
         check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
-        start, end = jobs.calendar_range(saturday, args.weeks)
+        first, last = jobs.calendar_range(start, args.weeks)
         try:
-            events = calendars.fetch_events(cal, start, end)
+            events = calendars.fetch_events(cal, first, last)
         except Exception as exc:          # network, TLS, auth: report it plainly, don't plan on wrong data
             raise ValueError(f"Couldn't read the calendars ({type(exc).__name__}: {exc}). "
                              "Use --no-calendar to plan without them.") from exc
         buffer = cal.buffer_minutes
 
     shown: set[tuple[str, str]] = set()
-    for result in jobs.dry_run(conn, saturday, args.weeks, events, buffer):
+    for result in jobs.dry_run(conn, start, args.weeks, events, buffer, planning):
         new = [(c, why) for c, why in result.excluded if (c.id, why) not in shown]   # each reason once
         shown.update((c.id, why) for c, why in new)
         print_plan(result, new)
@@ -163,32 +189,38 @@ def check_calendar_people(calendar_people: set[str], known: set[str]) -> None:
                          f"(known: {', '.join(sorted(known))})")
 
 
+EVENT_LABELS = {"busy": "Busy", "away": "Away", "no_chores": "No chores", "extra_day": "Day off",
+                "extra_time": "Chore time"}
+
+
 def print_plan(result, excluded) -> None:
     plan = result.plan
-    print(f"=== Weekend of {plan.saturday:%a %d %b %Y}")
+    print(f"=== {plan.days[0]:%a %d %b} – {plan.days[-1]:%a %d %b %Y}")
     for e in result.events:
         who = " & ".join(p.capitalize() for p in e.people)
-        if e.travel:
+        label = EVENT_LABELS.get(e.kind, e.kind)
+        if e.kind in ("away", "no_chores", "extra_day"):
             last = (e.end - timedelta(days=1)).date()
-            print(f"  Away: {e.start:%a %d %b}–{last:%a %d %b}  {e.summary}  ({who})")
+            when = f"{e.start:%a %d %b}" + (f"–{last:%a %d %b}" if last != e.start.date() else "")
         elif e.end.date() == e.start.date():
-            print(f"  Busy: {e.start:%a %H:%M}-{e.end:%H:%M}  {e.summary}  ({who})")
+            when = f"{e.start:%a %d %b %H:%M}-{e.end:%H:%M}"
         else:
-            print(f"  Busy: {e.start:%a %H:%M} – {e.end:%a %H:%M}  {e.summary}  ({who})")
+            when = f"{e.start:%a %d %b %H:%M} – {e.end:%a %d %b %H:%M}"
+        print(f"  {label}: {when}  {e.summary}  ({who})")
     if result.blocked:
-        print("  Nobody has free time this weekend: nothing planned")
+        print("  Nobody has free chore time in this period: nothing planned")
         _print_excluded(excluded)
         print()
         return
     if result.next_available:
-        print(f"  Look-ahead: nobody free until the weekend of {result.next_available:%a %d %b}, so chores that "
+        print(f"  Look-ahead: no chore time again until {result.next_available:%a %d %b}, so chores that "
               "would be overdue by then are brought forward")
     hours: dict[str, float] = {}
     day = None
     for item in plan.items:
         if item.start.date() != day:
             day = item.start.date()
-            print(f"  {day:%A}")
+            print(f"  {day:%A %d %b}")
         who = " & ".join(p.capitalize() for p in item.people)
         print(f"    {item.start:%H:%M}-{item.end:%H:%M}  {item.chore.name}  ({who})  score {item.score:g}")
         for p in item.people:

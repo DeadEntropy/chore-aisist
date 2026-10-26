@@ -47,7 +47,12 @@ services:
       NEXTCLOUD_APP_PASSWORD: ${NEXTCLOUD_APP_PASSWORD:-}
       BUSY_CALENDARS: ${BUSY_CALENDARS:-}
       EVENT_BUFFER_MINUTES: ${EVENT_BUFFER_MINUTES:-30}
+      CHORE_WINDOWS: ${CHORE_WINDOWS:-sat 08:00-18:00; sun 08:00-18:00}
+      EXTRA_DAY_WINDOW: ${EXTRA_DAY_WINDOW:-08:00-18:00}
       TRAVEL_KEYWORDS: ${TRAVEL_KEYWORDS:-travel,trip,away}
+      NO_CHORES_KEYWORDS: ${NO_CHORES_KEYWORDS:-no chores}
+      DAY_OFF_KEYWORDS: ${DAY_OFF_KEYWORDS:-day off,holiday}
+      CHORE_TIME_KEYWORDS: ${CHORE_TIME_KEYWORDS:-chore}
       CALDAV_TIMEOUT_SECONDS: ${CALDAV_TIMEOUT_SECONDS:-30}
     extra_hosts:
       # The server may not resolve Nextcloud's name, and its certificate only covers the name, not the IP.

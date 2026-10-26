@@ -1,10 +1,22 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
-from planner.fitting import plan_weekend
-from planner.models import Busy, Chore, Person, Scored
+from planner.fitting import plan_period
+from planner.models import Chore, Person, Scored
 
 SAT = date(2026, 10, 31)
-PEOPLE = [Person("nicolas", "Nicolas", 6), Person("anna", "Anna", 6)]
+SUN = SAT + timedelta(days=1)
+DAYS = [SAT, SUN]
+PEOPLE = [Person("nicolas", "Nicolas"), Person("anna", "Anna")]
+WINDOW = [(8 * 60, 18 * 60)]
+
+
+def free(**overrides):
+    """Both people free 08:00-18:00 on both days, unless overridden: free(nicolas_sat=[...])."""
+    slots = {(p.id, d): list(WINDOW) for p in PEOPLE for d in DAYS}
+    for key, value in overrides.items():
+        who, day = key.split("_")
+        slots[(who, SAT if day == "sat" else SUN)] = value
+    return slots
 
 
 def chore(id, hours, who, score=1.0):
@@ -17,77 +29,77 @@ def at(day, hhmm):
     return datetime(day.year, day.month, day.day, h, m)
 
 
-def test_budget_is_never_exceeded():
-    scored = [chore(f"c{i}", 2, "nicolas", score=10 - i) for i in range(5)]
-    plan = plan_weekend(scored, PEOPLE, [], SAT)
-    assert sum(i.chore.duration_h for i in plan.items) == 6
-    assert [c.id for c, _ in plan.unplanned] == ["c3", "c4"]
-    assert all(why == "weekend budget used up" for _, why in plan.unplanned)
+def test_no_budget_fills_free_time_until_it_runs_out():
+    scored = [chore(f"c{i}", 4, "nicolas", score=10 - i) for i in range(6)]
+    plan = plan_period(scored, PEOPLE, DAYS, free())
+    assert sum(i.chore.duration_h for i in plan.items) == 16          # two 4 h chores fit in each 10 h day
+    assert all(why == "no free slot long enough" for _, why in plan.unplanned)
 
 
-def test_higher_score_wins_the_budget():
-    plan = plan_weekend([chore("big", 6, "anna", 9), chore("small", 1, "anna", 1)], PEOPLE, [], SAT)
-    assert [i.chore.id for i in plan.items] == ["big"]
+def test_higher_score_wins_the_time():
+    plan = plan_period([chore("big", 10, "anna", 9), chore("small", 10, "anna", 1), chore("third", 10, "anna", 0.5)],
+                       PEOPLE, DAYS, free())
+    assert [i.chore.id for i in plan.items] == ["big", "small"]
 
 
-def test_both_uses_both_budgets_and_a_common_slot():
-    busy = [Busy("anna", at(SAT, "08:00"), at(SAT, "12:00"))]
-    plan = plan_weekend([chore("together", 2, "both")], PEOPLE, busy, SAT)
+def test_both_needs_a_common_slot():
+    plan = plan_period([chore("together", 2, "both")], PEOPLE, DAYS, free(anna_sat=[(12 * 60, 18 * 60)]))
     item = plan.items[0]
     assert item.people == ["nicolas", "anna"]
-    # Sunday has more common free time (10 h vs 6 h), so it goes there, first thing.
-    assert item.start == at(SAT.replace(day=1, month=11), "08:00")
+    assert item.start == at(SUN, "08:00")        # Sunday has more common free time (10 h vs 6 h)
 
 
-def test_either_goes_to_person_with_more_budget():
-    plan = plan_weekend([chore("n-job", 3, "nicolas", 5), chore("any", 1, "either", 1)], PEOPLE, [], SAT)
+def test_either_goes_to_person_with_more_free_time_left():
+    plan = plan_period([chore("n-job", 9, "nicolas", 5), chore("any", 1, "either", 1)], PEOPLE, DAYS, free())
     assert {i.chore.id: i.people for i in plan.items}["any"] == ["anna"]
 
 
-def test_busy_time_is_respected():
-    busy = [Busy("nicolas", at(SAT, "08:00"), at(SAT, "17:30")),
-            Busy("nicolas", at(SAT.replace(day=1, month=11), "00:00"), at(SAT.replace(day=2, month=11), "00:00"))]
-    plan = plan_weekend([chore("fix", 1, "nicolas")], PEOPLE, busy, SAT)
-    assert plan.items == []
-    assert plan.unplanned[0][1] == "no free slot long enough"
+def test_only_free_slots_are_used():
+    plan = plan_period([chore("fix", 1, "nicolas")], PEOPLE, DAYS, free(nicolas_sat=[(17 * 60, 17 * 60 + 30)],
+                                                                        nicolas_sun=[]))
+    assert plan.items == [] and plan.unplanned[0][1] == "no free slot long enough"
+
+
+def test_any_list_of_days():
+    thu, mon = SAT - timedelta(days=2), SAT + timedelta(days=2)
+    slots = {("nicolas", thu): [(14 * 60, 18 * 60)], ("anna", thu): [], ("nicolas", mon): [], ("anna", mon): []}
+    plan = plan_period([chore("fix", 2, "nicolas")], PEOPLE, [thu, mon], slots)
+    assert plan.items[0].start == at(thu, "14:00") and plan.days == [thu, mon]
 
 
 def test_chores_do_not_overlap_for_a_person():
     scored = [chore(f"c{i}", 1.5, "nicolas", score=10 - i) for i in range(4)]
-    items = plan_weekend(scored, PEOPLE, [], SAT).items
+    items = plan_period(scored, PEOPLE, DAYS, free()).items
     spans = sorted((i.start, i.end) for i in items)
     assert all(a_end <= b_start for (_, a_end), (b_start, _) in zip(spans, spans[1:]))
-    assert all(at(i.start.date(), "08:00") <= i.start and i.end <= at(i.start.date(), "18:00") for i in items)
 
 
-def test_job_goes_after_its_purchase_same_weekend():
+def test_unknown_assignee_is_reported():
+    plan = plan_period([chore("x", 1, "grandma")], PEOPLE, DAYS, free())
+    assert plan.unplanned[0][1] == "unknown assignee 'grandma'"
+
+
+def test_job_goes_after_its_purchase():
     buy, job = chore("buy", 1, "anna", 5), chore("job", 2, "nicolas", 5)
     job.waits_for = ["buy"]
-    busy = [Busy("anna", at(SAT, "08:00"), at(SAT, "16:00"))]       # Anna can only shop late Saturday
-    items = {i.chore.id: i for i in plan_weekend([buy, job], PEOPLE, busy, SAT).items}
+    items = {i.chore.id: i for i in plan_period([buy, job], PEOPLE, DAYS,
+                                                free(anna_sat=[(16 * 60, 18 * 60)], anna_sun=[])).items}
     assert items["buy"].start == at(SAT, "16:00")
     assert items["job"].start >= items["buy"].end
 
 
 def test_job_dropped_when_its_purchase_did_not_fit():
-    buy, job = chore("buy", 7, "anna", 5), chore("job", 1, "nicolas", 5)   # 7 h > Anna's 6 h budget
+    buy, job = chore("buy", 11, "anna", 5), chore("job", 1, "nicolas", 5)   # 11 h > any day's window
     job.waits_for = ["buy"]
-    plan = plan_weekend([buy, job], PEOPLE, [], SAT)
+    plan = plan_period([buy, job], PEOPLE, DAYS, free())
     assert plan.items == []
     assert dict((c.id, why) for c, why in plan.unplanned)["job"] == "needs buy first, which didn't fit"
 
 
-def test_unknown_assignee_is_reported():
-    plan = plan_weekend([chore("x", 1, "grandma")], PEOPLE, [], SAT)
-    assert plan.unplanned[0][1] == "unknown assignee 'grandma'"
-
-
-def test_three_step_chain_fits_in_one_weekend():
+def test_three_step_chain_in_order():
     from planner.scoring import score_chores
-    from planner.models import Chore
     mk = lambda id, needs=(): Chore(id=id, name=id, category="garden", type="one_off", duration_h=1, priority=3,
                                     assignee="nicolas", needs=list(needs), created_on=SAT)
     scored, _ = score_chores([mk("relay", ["lift"]), mk("lift", ["buy"]), mk("buy")], {}, SAT)
-    items = plan_weekend(scored, PEOPLE, [], SAT).items
-    order = [i.chore.id for i in sorted(items, key=lambda i: i.start)]
+    order = [i.chore.id for i in sorted(plan_period(scored, PEOPLE, DAYS, free()).items, key=lambda i: i.start)]
     assert order == ["buy", "lift", "relay"]
