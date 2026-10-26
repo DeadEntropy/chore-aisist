@@ -63,5 +63,5 @@ def test_real_plan_rejects_dry_run_only_flags(flags):
     from planner.cli import cmd_plan
 
     args = build_parser().parse_args(["plan", *flags])
-    with pytest.raises(ValueError, match="only work with --dry-run"):
+    with pytest.raises(ValueError, match="only works? with --dry-run"):
         cmd_plan(None, args, None)
