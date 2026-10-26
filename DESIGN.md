@@ -178,8 +178,9 @@ Implemented: planning works on **7-day periods** (from tomorrow, by default). Af
 day comes from the default windows (e.g. next Saturday); the *actual* one also accounts for the calendars (travel,
 "No chores", busy days). If the actual one is later, chores are still scored as of the period's first day, except
 recurring chores that would be past `max` by then: those are scored as they would be then and are eligible now even
-below `min`, so they're done before the trip. Chores that wouldn't go overdue wait. Look-ahead reaches up to 6 weeks. It triggers only when *everyone* is
-away; a per-person version is a possible follow-up.
+below `min`, so they're done before the trip. Chores that wouldn't go overdue wait. Look-ahead reaches up to 6 weeks. It triggers whenever nobody has chore time on the next chore days, whatever the reason:
+everyone away, a "No chores" day, or days fully booked (e.g. a camping weekend). A per-person version (one adult's
+trip) is a possible follow-up.
 
 Decided for phase 1:
 

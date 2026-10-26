@@ -47,9 +47,9 @@ What each one does in more detail:
 - **"Chores" (timed):** exactly that time becomes chore time for that calendar's people. If another event overlaps
   it, the overlap is still blocked.
 - **"No chores" (all-day):** no chores that day, even on a Saturday or a day off.
-- **Travel (all-day):** you're away every day the event covers, so no chores for you. If **both** of you are away for
-  the next chore days, the planner brings forward the chores that would become overdue while you're gone and does them
-  before you leave.
+- **Travel (all-day):** you're away every day the event covers, so no chores for you.
+- **Look-ahead:** if **neither** of you has chore time on the next chore days (both away, a "No chores" weekend, or a
+  weekend fully booked), the planner brings forward the chores that would become overdue by then and does them first.
 - **Cancelled events** never block.
 
 **Which rule wins** when several apply to the same day:
