@@ -42,13 +42,16 @@ services:
       PLANNER_TIMEZONE: America/New_York
       # Calendars are optional: leave CALDAV_URL unset in .env for database-only use.
       CALDAV_URL: ${CALDAV_URL:-}
-      CALDAV_CA_CERT: /certs/homelab-ca.crt
+      CALDAV_CA_CERT: ${HOMELAB_CA_CERT:+/certs/homelab-ca.crt}   # empty → system certificates
       NEXTCLOUD_USER: ${NEXTCLOUD_USER:-}
       NEXTCLOUD_APP_PASSWORD: ${NEXTCLOUD_APP_PASSWORD:-}
       BUSY_CALENDARS: ${BUSY_CALENDARS:-}
       EVENT_BUFFER_MINUTES: ${EVENT_BUFFER_MINUTES:-30}
       TRAVEL_KEYWORDS: ${TRAVEL_KEYWORDS:-travel,trip,away}
+      CALDAV_TIMEOUT_SECONDS: ${CALDAV_TIMEOUT_SECONDS:-30}
     extra_hosts:
-      - "nextcloud.local:${NEXTCLOUD_IP:-127.0.0.1}"   # the server may not resolve the name; the cert only covers it
+      # The server may not resolve Nextcloud's name, and its certificate only covers the name, not the IP.
+      # NEXTCLOUD_HOST must match the host in CALDAV_URL.
+      - "${NEXTCLOUD_HOST:-nextcloud.local}:${NEXTCLOUD_IP:-127.0.0.1}"
     volumes:
       - ${HOMELAB_CA_CERT:-/dev/null}:/certs/homelab-ca.crt:ro   # CA that signed Nextcloud's certificate

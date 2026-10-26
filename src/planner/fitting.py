@@ -78,6 +78,16 @@ def plan_weekend(
     return Plan(saturday, items, unplanned)
 
 
+def free_minutes(busy: list[Busy], person_id: str, day: date,
+                 day_start: time = DAY_START, day_end: time = DAY_END) -> int:
+    """Minutes of the person's chore window on `day` not covered by busy time."""
+    slots: Slots = [(_minutes(day_start), _minutes(day_end))]
+    for b in busy:
+        if b.person_id == person_id and (span := _clip(b, day)):
+            slots = _subtract(slots, span)
+    return sum(end - start for start, end in slots)
+
+
 def _candidate_groups(assignee: str, people: list[Person], budget: dict[str, int]) -> list[list[str]]:
     ids = [p.id for p in people]
     if assignee == "both":

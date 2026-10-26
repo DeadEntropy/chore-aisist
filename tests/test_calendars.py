@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import icalendar
 import pytest
 
-from planner.calendars import away_days, busy_from_events, is_travel, parse_event
+from planner.calendars import busy_from_events, is_travel, parse_event
 from planner.config import parse_busy_calendars
 from planner.models import CalEvent
 
@@ -64,19 +64,13 @@ def test_travel_keywords(title, expected):
 
 def test_buffer_on_timed_events_but_not_travel():
     party = CalEvent(["nicolas", "anna"], "Party", datetime(2026, 10, 31, 14), datetime(2026, 10, 31, 16))
-    trip = CalEvent(["anna"], "Trip", datetime(2026, 11, 7), datetime(2026, 11, 9), all_day=True, travel=True)
+    trip = CalEvent(["anna"], "Trip", datetime(2026, 11, 7), datetime(2026, 11, 9), travel=True)
     busy = busy_from_events([party, trip], 30)
     spans = {(b.person_id, b.start, b.end) for b in busy}
     assert ("nicolas", datetime(2026, 10, 31, 13, 30), datetime(2026, 10, 31, 16, 30)) in spans
     assert ("anna", datetime(2026, 10, 31, 13, 30), datetime(2026, 10, 31, 16, 30)) in spans
     assert ("anna", datetime(2026, 11, 7), datetime(2026, 11, 9)) in spans
     assert len(busy) == 3
-
-
-def test_away_days_cover_each_day_end_exclusive():
-    trip = CalEvent(["nicolas"], "Away", datetime(2026, 11, 6), datetime(2026, 11, 9), all_day=True, travel=True)
-    assert away_days([trip]) == {("nicolas", date(2026, 11, 6)), ("nicolas", date(2026, 11, 7)),
-                                 ("nicolas", date(2026, 11, 8))}
 
 
 def test_parse_busy_calendars():

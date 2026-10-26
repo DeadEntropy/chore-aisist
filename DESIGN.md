@@ -175,10 +175,12 @@ score = urgency * priority
 
 Before scoring, find the **next available weekend** after this one (skipping weekends blocked by travel). If a chore would pass `max` before that next available weekend, bump its score as if it were overdue now. This front-loads work before a trip and naturally produces a catch-up plan afterwards.
 
-Implemented in phase 2: a weekend is **blocked** when everyone is away both days. Chores are scored as of the
-weekend before the next available one: normally that's this weekend; if the following weekend(s) are blocked, it's
-the last blocked one, so whatever would go overdue during the trip scores (and becomes eligible) now. Look-ahead
-reaches up to 6 weeks.
+Implemented in phase 2: a weekend is **blocked** when nobody has any free time in the 08:00–18:00 window on either
+day, whether from all-day travel or timed events covering the weekend. If the following weekend(s) are blocked,
+chores are still scored as of this weekend, except recurring chores that would be past `max` by the next available
+weekend: those are scored as they would be then and are eligible now even below `min`, so they're done before the
+trip. Chores that wouldn't go overdue wait. Look-ahead reaches up to 6 weeks. It triggers only when *everyone* is
+away; a per-person version is a possible follow-up.
 
 Decided for phase 1:
 
@@ -330,7 +332,7 @@ no host cron.
 | Module | Does | Talks to |
 |---|---|---|
 | `config.py` | Settings from environment variables | — |
-| `models.py` | Data shapes: `Chore`, `Person`, `Completion` (+ `PlannedItem`, `Busy` later) | — |
+| `models.py` | Data shapes: `Chore`, `Person`, `Completion`, `CalEvent`, `Busy`, `Scored`, `PlannedItem`, `Plan` | — |
 | `db.py` | All SQL, including `migrate()` | MariaDB |
 | `seed.py` | Import / export `chores.json` | via `db.py` |
 | `cli.py` | The `planner` command | the above |
@@ -387,7 +389,7 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 
 - Notification channel: Home Assistant push, email, or Nextcloud Talk.
 - Weekends only, or daily guidance as well?
-- How travel is marked in the calendar (dedicated calendar vs. category/keyword).
+- Per-person travel look-ahead (bring forward one person's chores before their own trip).
 - Whether hired help (e.g. a lawn service) should be modeled as a third "person" with its own schedule.
 - Per-day capacity split (e.g. Saturday lighter when there are kids' events).
 
@@ -398,4 +400,7 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - **Calendar**: dedicated Chores calendar owned by the app user (`<app-user>`); events only; family read-only.
 - **Feedback loop**: completions reported through Claude Code → CLI; no phone task apps.
 - **Dev environment**: none separate for now; use the real database and calendar.
+- **Travel**: an all-day event whose title has a word starting with `travel`, `trip` or `away`, on any of the
+  configured calendars, makes that calendar's people away (shared calendars → both). Revisit with experience.
+- **Event buffer**: 30 min before and after timed events (`EVENT_BUFFER_MINUTES`).
 - **Seasonality**: removed from the chore fields for now; add back if a chore really only applies part of the year.

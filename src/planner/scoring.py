@@ -55,8 +55,13 @@ def score_chores(
     chores: list[Chore],
     last_done: dict[str, date],
     today: date,
+    next_available: date | None = None,
 ) -> tuple[list[Scored], list[tuple[Chore, str]]]:
     """Return (eligible chores sorted by score, highest first; excluded chores with the reason).
+
+    `next_available` is the next weekend after this one when anyone is home (travel look-ahead). A recurring chore
+    that would be past `max` by then is scored as it would be then, and is eligible now even if below `min`, so it
+    gets done before the trip. Everything else is scored as of `today`.
 
     A chore whose needs aren't done yet stays eligible if every pending need is itself eligible: fitting then
     places it after them on the same weekend. Each pending need inherits the job's score if that is higher,
@@ -80,6 +85,10 @@ def score_chores(
                 # and keeps growing like any overdue chore.
                 last = chore.created_on - timedelta(days=chore.interval_max_days)
             u = urgency_recurring(chore, last, today)
+            if next_available is not None and next_available > today:
+                later = urgency_recurring(chore, last, next_available)
+                if later is not None and later > 1 and (u is None or later > u):
+                    u = later                                # would go overdue during the trip: do it now
             if u is None:
                 continue                                     # not due yet
         else:

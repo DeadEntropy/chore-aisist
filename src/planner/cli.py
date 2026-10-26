@@ -171,10 +171,16 @@ def print_plan(result, excluded) -> None:
         if e.travel:
             last = (e.end - timedelta(days=1)).date()
             print(f"  Away: {e.start:%a %d %b}–{last:%a %d %b}  {e.summary}  ({who})")
-        else:
+        elif e.end.date() == e.start.date():
             print(f"  Busy: {e.start:%a %H:%M}-{e.end:%H:%M}  {e.summary}  ({who})")
-    if result.scored_as_of:
-        print(f"  Look-ahead: away on the following weekend(s), so chores are scored as of {result.scored_as_of:%a %d %b}")
+        else:
+            print(f"  Busy: {e.start:%a %H:%M} – {e.end:%a %H:%M}  {e.summary}  ({who})")
+    if result.blocked:
+        print("  Nobody has free time this weekend: nothing planned\n")
+        return
+    if result.next_available:
+        print(f"  Look-ahead: nobody free until the weekend of {result.next_available:%a %d %b}, so chores that "
+              "would be overdue by then are brought forward")
     hours: dict[str, float] = {}
     day = None
     for item in plan.items:

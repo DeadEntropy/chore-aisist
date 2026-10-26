@@ -118,7 +118,9 @@ The design calls for CalDAV so the planner uses Nextcloud's supported API and ke
   - Chores: `https://<nextcloud-host>/remote.php/dav/calendars/<app-user>/chores/`
   - Shared calendars appear under the app user with a suffix, e.g. `.../calendars/<app-user>/family_shared_by_<owner-user>/`
 - Auth: `<app-user>` + **app password**, in `.env` (gitignored, mode 600):
-  `NEXTCLOUD_USER`, `NEXTCLOUD_APP_PASSWORD`, `CALDAV_URL`, `CHORES_CALENDAR_URI`.
+  `NEXTCLOUD_USER`, `NEXTCLOUD_APP_PASSWORD`, `CALDAV_URL`, `CALDAV_CA_CERT`, `CHORES_CALENDAR_URI`,
+  `BUSY_CALENDARS` (calendar URI → people it blocks), `EVENT_BUFFER_MINUTES`, `TRAVEL_KEYWORDS`,
+  `CALDAV_TIMEOUT_SECONDS` (see `.env.example`).
   The app itself should only use the app password, never the account's login password.
   Rotate with `occ user:auth-tokens:list|delete|add <app-user>`.
 - DNS: the home server does not resolve `<nextcloud-host>` itself. Point it at the server's LAN IP (e.g. `curl --resolve
@@ -127,7 +129,7 @@ The design calls for CalDAV so the planner uses Nextcloud's supported API and ke
   or the planner must be given that CA bundle.
 - If the planner runs as a container, it can join Nextcloud's Docker network and reach the app container
   directly, but `overwriteprotocol=https` may cause redirects — going through NPM is simpler.
-- Python: the `caldav` library handles discovery, `date_search`, VEVENT read and write.
+- Python: the `caldav` library handles discovery, `search(start=…, end=…, expand=True)` and VEVENT read and write.
 - Smoke test (expects `207`):
   ```bash
   set -a; . ./.env; set +a

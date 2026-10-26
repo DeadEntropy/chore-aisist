@@ -49,10 +49,10 @@ def parse_event(component, people: list[str], tz: ZoneInfo, travel_keywords: tup
         if not is_travel(summary, travel_keywords):
             return None
         return CalEvent(people, summary, datetime.combine(start, time(0)), datetime.combine(end, time(0)),
-                        all_day=True, travel=True)
+                        travel=True)
 
     end = end_prop.dt if end_prop else start + (duration.dt if duration else timedelta(0))
-    return CalEvent(people, summary, _local(start, tz), _local(end, tz), all_day=False, travel=False)
+    return CalEvent(people, summary, _local(start, tz), _local(end, tz))
 
 
 def is_travel(summary: str, keywords: tuple[str, ...]) -> bool:
@@ -68,18 +68,6 @@ def busy_from_events(events: list[CalEvent], buffer_minutes: int) -> list[Busy]:
         start, end = (e.start, e.end) if e.travel else (e.start - pad, e.end + pad)
         busy.extend(Busy(p, start, end) for p in e.people)
     return busy
-
-
-def away_days(events: list[CalEvent]) -> set[tuple[str, date]]:
-    """(person, day) pairs covered by a travel event."""
-    out = set()
-    for e in events:
-        if e.travel:
-            day = e.start.date()
-            while datetime.combine(day, time(0)) < e.end:
-                out.update((p, day) for p in e.people)
-                day += timedelta(days=1)
-    return out
 
 
 def _local(value: datetime, tz: ZoneInfo) -> datetime:
