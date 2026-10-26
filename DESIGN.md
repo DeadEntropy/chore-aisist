@@ -21,7 +21,7 @@ The Household Planner is a self-hosted assistant that:
 5. **Data lives apart from code.** Chores and their history live in a dedicated database container on the home server, not in git. The app connects to it when it needs to; rebuilding or replacing the app never touches the data.
 6. **Windows, not dates.** Chores have a tolerance window ("every 3–5 weeks"), not a fixed due date.
 7. **Count from actual completion.** The next due date is computed from when a chore was *actually done*, so a slip doesn't compound.
-8. **Capacity is a budget.** Each person has a realistic number of hours per weekend; the planner never schedules beyond it.
+8. **The calendar is the budget.** Any free time in the chore windows can get chores; time you want to keep free goes in the calendar.
 
 ## 3. Context & constraints
 
@@ -112,7 +112,6 @@ CREATE TABLE chore_need (
 CREATE TABLE person (
   id              VARCHAR(32) PRIMARY KEY,              -- nicolas | anna
   name            VARCHAR(64) NOT NULL,
-  weekend_hours   DECIMAL(4,2) NOT NULL
 );
 
 -- History: every time a chore was done or skipped.
@@ -175,11 +174,11 @@ score = urgency * priority
 
 Before scoring, find the **next available weekend** after this one (skipping weekends blocked by travel). If a chore would pass `max` before that next available weekend, bump its score as if it were overdue now. This front-loads work before a trip and naturally produces a catch-up plan afterwards.
 
-Implemented in phase 2: a weekend is **blocked** when nobody has any free time in the 08:00–18:00 window on either
-day, whether from all-day travel or timed events covering the weekend. If the following weekend(s) are blocked,
-chores are still scored as of this weekend, except recurring chores that would be past `max` by the next available
-weekend: those are scored as they would be then and are eligible now even below `min`, so they're done before the
-trip. Chores that wouldn't go overdue wait. Look-ahead reaches up to 6 weeks. It triggers only when *everyone* is
+Implemented: planning works on **7-day periods** (from tomorrow, by default). After a period, the *normal* next chore
+day comes from the default windows (e.g. next Saturday); the *actual* one also accounts for the calendars (travel,
+"No chores", busy days). If the actual one is later, chores are still scored as of the period's first day, except
+recurring chores that would be past `max` by then: those are scored as they would be then and are eligible now even
+below `min`, so they're done before the trip. Chores that wouldn't go overdue wait. Look-ahead reaches up to 6 weeks. It triggers only when *everyone* is
 away; a per-person version is a possible follow-up.
 
 Decided for phase 1:
@@ -200,42 +199,38 @@ Decided for phase 1:
 - Chores missing duration, priority, assignee (or interval, for recurring) are not planned and are listed as
   "needs details".
 
-### 6.3 Capacity
+### 6.3 Availability (when chores can happen)
 
-For each person and each weekend day:
+There is **no hours budget**: any free time in the chore windows can get chores. If you want time kept free, put
+it in the calendar. Free time per person and day (`availability.py`) is:
 
-```
-available_h = weekend_hours share for that day
-            - hours blocked by calendar events (kids, gym, parties)
-```
+- the **default windows** (`CHORE_WINDOWS`, default `sat 08:00-18:00; sun 08:00-18:00`, the same for both people),
+- **plus** extra time from the calendars, for that calendar's people:
+  - an all-day event whose title has a word starting with `day off` / `holiday` (`DAY_OFF_KEYWORDS`) makes the
+    whole day available (`EXTRA_DAY_WINDOW`, 08:00–18:00), e.g. a long-weekend Monday;
+  - a timed event starting a word with `chore` (`CHORE_TIME_KEYWORDS`), e.g. "Chores" Thu 14:00–18:00, makes that
+    time available,
+- **minus** whole days off: all-day travel (`travel`/`trip`/`away`, `TRAVEL_KEYWORDS`) or `no chores`
+  (`NO_CHORES_KEYWORDS`),
+- **minus** busy time: every other timed event, plus a buffer before and after (`EVENT_BUFFER_MINUTES`, 30).
+  Events marked free (`TRANSP:TRANSPARENT`) or cancelled don't count; other all-day events are ignored.
 
-Fully blocked weekends (travel) have zero capacity.
-
-Implemented as **time slots** rather than subtracting event hours from the budget:
-
-- Chores can be placed between **08:00 and 18:00** on Saturday and Sunday.
-- Each person's busy events are removed from that window. Calendar → person: Nicolas → Nicolas, Anna → Anna,
-  Family and School → both (configurable: `BUSY_CALENDARS`).
-- Timed events block their time **plus a buffer before and after** (`EVENT_BUFFER_MINUTES`, 30 by default).
-  Events marked free (`TRANSP:TRANSPARENT`) or cancelled don't block.
-- **All-day events are ignored**, except travel: an all-day event whose title has a word starting with `travel`,
-  `trip` or `away` (`TRAVEL_KEYWORDS`) blocks every day it covers for that calendar's people (zero capacity).
-- A person's chores never exceed their `weekend_hours` budget for the weekend (6 h each to start).
+Calendar → person: Nicolas → Nicolas, Anna → Anna, Family and School → both (`BUSY_CALENDARS`).
 
 ### 6.4 Fitting
 
 1. Sort eligible chores by `score` descending, each one right after any pending needs it waits for (see §6.1:
    a job whose needs aren't done is still eligible if they can be planned earlier the same weekend).
-2. For each chore, assign it to the eligible person (per `assignee`) with the most remaining capacity on a suitable day.
+2. For each chore, assign it to the eligible person (per `assignee`) with the most free time left, on a suitable day.
 3. Outdoor chores go to the day with the better forecast; if both days are bad, they stay in the plan but are flagged "weather permitting".
-4. Skip a chore if no one has enough remaining capacity; it will score higher next week.
+4. Skip a chore if no one has a free slot long enough; it will score higher next time.
 5. Mark the lowest-scored scheduled chores as "skippable if rushed" in the brief.
 
 Greedy fitting is good enough for a handful of chores per weekend; revisit only if results look wrong.
 
-Placement details (phase 1): `either` goes to the person with the most budget left; `both` needs a slot where both
-are free and uses both budgets. Each chore goes in the first long-enough free slot on the day where that person (or
-pair) has the most free time left, which spreads work over the two days. Chores appear in the Chores calendar as
+Placement details: `either` goes to the person with the most free time left in the period; `both` needs a slot where
+both are free. Each chore goes in the first long-enough free slot on the day where that person (or pair) has the
+most free time left, which spreads work over the available days. Chores appear in the Chores calendar as
 **timed events** (e.g. `Sat 09:00–10:30 🧹 Mow the lawn (Nicolas)`).
 
 `planner plan --dry-run [--date D] [--weeks N]` prints the plan without writing anything; with `--weeks N` it assumes
@@ -337,7 +332,8 @@ no host cron.
 | `seed.py` | Import / export `chores.json` | via `db.py` |
 | `cli.py` | The `planner` command | the above |
 | `scoring.py` | Which chores are due and how urgent (pure) | — |
-| `fitting.py` | Who does what on which day within capacity (pure) | — |
+| `availability.py` | Free chore time per person and day: default windows + calendar extras − days off − busy time (pure) | — |
+| `fitting.py` | Who does what, when, in the free time (pure) | — |
 | `calendars.py` | Read busy time, sync the Chores calendar | Nextcloud |
 | `jobs.py` | `weekly_run()` and the long-running `serve()` | the above |
 | `weather.py`, `brief.py`, `notify.py` | Phases 4–5 | external APIs |
@@ -403,4 +399,6 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - **Travel**: an all-day event whose title has a word starting with `travel`, `trip` or `away`, on any of the
   configured calendars, makes that calendar's people away (shared calendars → both). Revisit with experience.
 - **Event buffer**: 30 min before and after timed events (`EVENT_BUFFER_MINUTES`).
+- **Availability**: default Saturday and Sunday 08:00–18:00 for both (config); extra or removed time comes from
+  calendar keywords ("Day off"/"Holiday", "Chores", "No chores", travel). No hours budget.
 - **Seasonality**: removed from the chore fields for now; add back if a chore really only applies part of the year.

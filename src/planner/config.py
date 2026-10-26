@@ -5,6 +5,21 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from planner.availability import Windows, parse_window, parse_windows
+
+KEYWORD_SETTINGS = {                 # event kind → (environment variable, default keywords)
+    "away": ("TRAVEL_KEYWORDS", "travel,trip,away"),
+    "no_chores": ("NO_CHORES_KEYWORDS", "no chores"),
+    "extra_day": ("DAY_OFF_KEYWORDS", "day off,holiday"),
+    "extra_time": ("CHORE_TIME_KEYWORDS", "chore"),
+}
+
+
+@dataclass(frozen=True)
+class PlanningSettings:
+    windows: Windows                           # default chore windows per weekday (CHORE_WINDOWS)
+    extra_day_window: tuple[int, int]          # chore window on a "Day off" (EXTRA_DAY_WINDOW)
+
 
 @dataclass(frozen=True)
 class CalendarSettings:
@@ -13,8 +28,8 @@ class CalendarSettings:
     password: str                              # Nextcloud app password
     ca_cert: str | bool                        # path to the CA that signed Nextcloud's certificate, or True
     calendars: tuple[tuple[str, tuple[str, ...]], ...]   # (calendar URI, people it blocks)
-    buffer_minutes: int                        # added before and after every timed event
-    travel_keywords: tuple[str, ...]           # all-day events whose title starts a word with one of these
+    buffer_minutes: int                        # added before and after every busy timed event
+    keywords: dict[str, tuple[str, ...]]       # event kind → title keywords (see KEYWORD_SETTINGS)
     timezone: str
     timeout_seconds: int = 30                  # per CalDAV request, so a stuck server can't hang the planner
 
@@ -45,6 +60,14 @@ def load_settings() -> Settings:
     )
 
 
+def load_planning_settings() -> PlanningSettings:
+    load_dotenv()
+    return PlanningSettings(
+        windows=parse_windows(os.environ.get("CHORE_WINDOWS", "sat 08:00-18:00; sun 08:00-18:00")),
+        extra_day_window=parse_window(os.environ.get("EXTRA_DAY_WINDOW", "08:00-18:00")),
+    )
+
+
 def load_calendar_settings() -> CalendarSettings | None:
     """CalDAV settings, or None when CALDAV_URL isn't set. Only called by commands that read the calendars,
     so a calendar misconfiguration never blocks database-only commands."""
@@ -70,8 +93,7 @@ def load_calendar_settings() -> CalendarSettings | None:
         ca_cert=os.environ.get("CALDAV_CA_CERT") or True,
         calendars=parse_busy_calendars(os.environ["BUSY_CALENDARS"]),
         buffer_minutes=buffer,
-        travel_keywords=tuple(
-            k.strip().lower() for k in os.environ.get("TRAVEL_KEYWORDS", "travel,trip,away").split(",") if k.strip()),
+        keywords={kind: _keywords(var, default) for kind, (var, default) in KEYWORD_SETTINGS.items()},
         timezone=os.environ.get("PLANNER_TIMEZONE", "America/New_York"),
         timeout_seconds=timeout,
     )
@@ -91,3 +113,7 @@ def parse_busy_calendars(text: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     if not out:
         raise ValueError("BUSY_CALENDARS is empty")
     return tuple(out)
+
+
+def _keywords(var: str, default: str) -> tuple[str, ...]:
+    return tuple(k.strip().lower() for k in os.environ.get(var, default).split(",") if k.strip())

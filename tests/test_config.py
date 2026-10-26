@@ -12,7 +12,9 @@ BASE = {"CALDAV_URL": "https://nextcloud.local/remote.php/dav", "NEXTCLOUD_USER"
 def env(monkeypatch):
     """Isolated environment: no .env file is read."""
     monkeypatch.setattr(config, "load_dotenv", lambda: None)
-    for key in list(BASE) + ["EVENT_BUFFER_MINUTES", "CALDAV_TIMEOUT_SECONDS", "CALDAV_CA_CERT"]:
+    for key in list(BASE) + ["EVENT_BUFFER_MINUTES", "CALDAV_TIMEOUT_SECONDS", "CALDAV_CA_CERT", "CHORE_WINDOWS",
+                             "EXTRA_DAY_WINDOW", "TRAVEL_KEYWORDS", "NO_CHORES_KEYWORDS", "DAY_OFF_KEYWORDS",
+                             "CHORE_TIME_KEYWORDS"]:
         monkeypatch.delenv(key, raising=False)
 
     def set_env(**values):
@@ -57,3 +59,21 @@ def test_caldav_url_must_be_https(env):
     env(**{**BASE, "CALDAV_URL": "http://nextcloud.local/remote.php/dav"})
     with pytest.raises(ValueError, match="https"):
         config.load_calendar_settings()
+
+
+def test_planning_defaults_are_the_weekend(env):
+    planning = config.load_planning_settings()
+    assert planning.windows == {5: [(480, 1080)], 6: [(480, 1080)]} and planning.extra_day_window == (480, 1080)
+
+
+def test_planning_windows_from_env(env):
+    env(CHORE_WINDOWS="sat 09:00-17:00; sun 08:00-12:00; wed 18:00-20:00", EXTRA_DAY_WINDOW="09:00-16:00")
+    planning = config.load_planning_settings()
+    assert planning.windows[2] == [(1080, 1200)] and planning.extra_day_window == (540, 960)
+
+
+def test_keywords_from_env(env):
+    env(**BASE, DAY_OFF_KEYWORDS="Day off, Vacation day", CHORE_TIME_KEYWORDS="bricolage")
+    cal = config.load_calendar_settings()
+    assert cal.keywords["extra_day"] == ("day off", "vacation day")
+    assert cal.keywords["extra_time"] == ("bricolage",) and cal.keywords["away"] == ("travel", "trip", "away")

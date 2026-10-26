@@ -15,7 +15,8 @@ src/planner/
   db.py         all SQL, including migrations
   seed.py       import / export chores.json
   scoring.py    which chores are due, and how urgent
-  fitting.py    who does what, when, within each person's weekend hours
+  availability.py  free chore time per person and day (default windows + calendar keywords)
+  fitting.py    who does what, when, in the free time
   calendars.py  reads the family calendars from Nextcloud (CalDAV) → busy time and travel
   jobs.py       ties it together (dry runs today; the weekly run later)
   cli.py        the `planner` command
@@ -75,9 +76,9 @@ planner chore add <id> name=... category=home|garden type=recurring|one_off [mor
 planner chore set <id> key=value ...     e.g. interval=7,10,14 duration_h=1.5 priority=3
                                               assignee=nicolas|anna|either|both outdoor=yes needs=a,b
 planner plan --dry-run [--date YYYY-MM-DD] [--weeks N] [--no-calendar]
-                                         print the coming weekend's plan (and the next N-1,
-                                         assuming planned chores get done), around the family
-                                         calendars; writes nothing
+                                         print the plan for the next 7 days (and the next N-1
+                                         periods, assuming planned chores get done), around
+                                         the family calendars; writes nothing
 ```
 
 `none` clears a field (`assignee=none`, `needs=none`).

@@ -29,7 +29,7 @@ def import_json(conn, path: Path, today: date | None = None,
 
     people = {p.id: p for p in db.get_people(conn)}
     for p in data.get("people", []):
-        person = Person(p["id"], p["name"], p["weekend_hours"])
+        person = Person(p["id"], p["name"])           # any other keys (e.g. an old weekend_hours) are ignored
         if person.id not in people:
             db.add_person(conn, person)
             summary["people"] += 1
@@ -83,7 +83,7 @@ def export_json(conn, path: Path) -> int:
     chores = db.get_chores(conn, include_inactive=True)
     data = {
         "people": [
-            {"id": p.id, "name": p.name, "weekend_hours": p.weekend_hours}
+            {"id": p.id, "name": p.name}
             for p in db.get_people(conn)
         ],
         "chores": [chore_to_json(c, done) for c in chores],

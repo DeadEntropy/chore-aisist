@@ -26,7 +26,6 @@ class Chore:
 class Person:
     id: str
     name: str
-    weekend_hours: float
 
 
 @dataclass
@@ -40,12 +39,18 @@ class Completion:
 
 @dataclass
 class CalEvent:
-    """A calendar event that blocks people, in local time. Travel events cover whole days (end exclusive)."""
+    """A calendar event in local time, classified by what it means for chore time (see calendars.classify).
+
+    kind: busy (timed event, blocks its time) | away (all-day travel) | no_chores (all-day "No chores")
+        | extra_day (all-day "Day off"/"Holiday": the whole day becomes available)
+        | extra_time (timed "Chores": that time becomes available)
+    All-day events cover whole days, end exclusive.
+    """
     people: list[str]
     summary: str
     start: datetime
     end: datetime
-    travel: bool = False
+    kind: str = "busy"
 
 
 @dataclass
@@ -75,6 +80,7 @@ class PlannedItem:
 
 @dataclass
 class Plan:
-    saturday: date
+    start: date                          # first day of the planning period
+    days: list[date]                     # the days planned (every day of the period, free time or not)
     items: list[PlannedItem]
     unplanned: list[tuple[Chore, str]]   # eligible chores that didn't fit, with the reason

@@ -95,7 +95,7 @@ def test_import_update_applies_fields_needs_and_people(conn, tmp_path):
     seed.import_json(conn, SEED)
 
     def edit(d):
-        d["people"][0]["weekend_hours"] = 8
+        d["people"][0]["name"] = "Nico"
         for c in d["chores"]:
             if c["id"] == "weed-pool-deck":
                 c["duration_h"] = 1.5
@@ -109,7 +109,7 @@ def test_import_update_applies_fields_needs_and_people(conn, tmp_path):
     assert (s["chores"], s["updated"], s["people_updated"]) == (1, 2, 1)
     assert db.get_chore(conn, "weed-pool-deck").duration_h == 1.5
     assert db.get_chore(conn, "paint-wall").needs == ["buy-paint-greek-villa", "buy-wall-hangers"]
-    assert {p.id: p.weekend_hours for p in db.get_people(conn)}["nicolas"] == 8
+    assert {p.id: p.name for p in db.get_people(conn)}["nicolas"] == "Nico"
 
 
 def test_import_retire_keeps_history(conn, tmp_path):

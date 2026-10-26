@@ -147,24 +147,23 @@ def _row_to_chore(row: dict, needs: list[str]) -> Chore:
 
 def get_people(conn) -> list[Person]:
     with conn.cursor() as cur:
-        cur.execute("SELECT id, name, weekend_hours FROM person ORDER BY id")
-        return [Person(r["id"], r["name"], float(r["weekend_hours"])) for r in cur.fetchall()]
+        cur.execute("SELECT id, name FROM person ORDER BY id")
+        return [Person(r["id"], r["name"]) for r in cur.fetchall()]
 
 
 def add_person(conn, person: Person) -> bool:
     """Insert if missing. Returns True if a row was added."""
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT IGNORE INTO person (id, name, weekend_hours) VALUES (%s, %s, %s)",
-            (person.id, person.name, person.weekend_hours),
+            "INSERT IGNORE INTO person (id, name) VALUES (%s, %s)",
+            (person.id, person.name),
         )
         return cur.rowcount == 1
 
 
 def update_person(conn, person: Person) -> None:
     with conn.cursor() as cur:
-        cur.execute("UPDATE person SET name = %s, weekend_hours = %s WHERE id = %s",
-                    (person.name, person.weekend_hours, person.id))
+        cur.execute("UPDATE person SET name = %s WHERE id = %s", (person.name, person.id))
 
 
 # --- history ----------------------------------------------------------------
