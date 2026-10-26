@@ -176,7 +176,9 @@ def print_plan(result, excluded) -> None:
         else:
             print(f"  Busy: {e.start:%a %H:%M} – {e.end:%a %H:%M}  {e.summary}  ({who})")
     if result.blocked:
-        print("  Nobody has free time this weekend: nothing planned\n")
+        print("  Nobody has free time this weekend: nothing planned")
+        _print_excluded(excluded)
+        print()
         return
     if result.next_available:
         print(f"  Look-ahead: nobody free until the weekend of {result.next_available:%a %d %b}, so chores that "
@@ -197,9 +199,13 @@ def print_plan(result, excluded) -> None:
         print("  Hours: " + ", ".join(f"{p.capitalize()} {h:g}" for p, h in sorted(hours.items())))
     if plan.unplanned:
         print("  Didn't fit: " + "; ".join(f"{c.id} ({why})" for c, why in plan.unplanned))
+    _print_excluded(excluded)
+    print()
+
+
+def _print_excluded(excluded) -> None:
     for chore, why in excluded:
         print(f"  Not eligible: {chore.id} ({why})")
-    print()
 
 
 # --- helpers ----------------------------------------------------------------

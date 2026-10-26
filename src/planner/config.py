@@ -52,6 +52,8 @@ def load_calendar_settings() -> CalendarSettings | None:
     url = os.environ.get("CALDAV_URL")
     if not url:
         return None
+    if not url.lower().startswith("https://"):
+        raise ValueError("CALDAV_URL must start with https:// (the app password must not travel unencrypted)")
     missing = [k for k in ("NEXTCLOUD_USER", "NEXTCLOUD_APP_PASSWORD", "BUSY_CALENDARS") if not os.environ.get(k)]
     if missing:
         raise ValueError(f"CALDAV_URL is set but {', '.join(missing)} is not (see .env.example)")

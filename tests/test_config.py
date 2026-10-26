@@ -51,3 +51,9 @@ def test_unknown_calendar_people_are_rejected():
     check_calendar_people({"nicolas", "anna"}, {"nicolas", "anna"})
     with pytest.raises(ValueError, match="nicholas"):
         check_calendar_people({"nicholas", "anna"}, {"nicolas", "anna"})
+
+
+def test_caldav_url_must_be_https(env):
+    env(**{**BASE, "CALDAV_URL": "http://nextcloud.local/remote.php/dav"})
+    with pytest.raises(ValueError, match="https"):
+        config.load_calendar_settings()
