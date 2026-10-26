@@ -183,7 +183,8 @@ Decided for phase 1:
   waiting (`score = urgency × priority`), so a neglected one-off overtakes a fully-due recurring chore after ~2.5 weeks.
 - `needs`: a job whose needs aren't done yet can still be planned if every pending need is planned **earlier the same
   weekend** (buy Saturday morning, do the job that afternoon or Sunday). Pending needs inherit the job's score when
-  it's higher, and take the earliest free slot so the job has room after them. If the need doesn't fit, neither does
+  it's higher (all the way down a chain), sort before the chores waiting on them (by depth in the chain), and take
+  the earliest free slot so the job has room after them. Circular needs are excluded with a reason. If the need doesn't fit, neither does
   the job.
   When a **recurring** job needs another **recurring** chore, the need only counts if it was done *since the job was
   last done* (a fresh mulch order

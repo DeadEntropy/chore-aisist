@@ -109,6 +109,32 @@ def test_recurring_job_keeps_a_done_one_off_need():
     assert eligible[0].waits_for == [] and excluded == []
 
 
+def test_chain_puts_prerequisites_first_and_passes_the_score_down():
+    # relay needs lift, lift needs buy; relay is the most urgent. Same priority, so ids would sort relay first.
+    chores = [one_off("relay", priority=5, needs=["lift"]), one_off("lift", priority=1, needs=["buy"]),
+              one_off("buy", priority=1), one_off("other", priority=3)]
+    eligible, _ = score_chores(chores, {}, TODAY)
+    assert [s.chore.id for s in eligible] == ["buy", "lift", "relay", "other"]
+    assert [s.score for s in eligible[:3]] == [2.5, 2.5, 2.5]
+
+
+def test_score_reaches_the_bottom_of_a_chain_in_any_order():
+    # 'top' (9) waits for 'mid'; 'mid' waits for 'low'; 'side' (6) also waits for 'low'.
+    chores = [one_off("top", priority=5, needs=["mid"], created=ago(56)), one_off("mid", priority=1, needs=["low"]),
+              one_off("low", priority=1), one_off("side", priority=4, needs=["low"], created=ago(35))]
+    eligible, _ = score_chores(chores, {}, TODAY)
+    scores = {s.chore.id: s.score for s in eligible}
+    assert scores["low"] == scores["mid"] == scores["top"]
+
+
+def test_circular_needs_are_excluded():
+    chores = [one_off("a", needs=["b"]), one_off("b", needs=["a"]), one_off("c", needs=["a"]), one_off("ok")]
+    eligible, excluded = score_chores(chores, {}, TODAY)
+    assert [s.chore.id for s in eligible] == ["ok"]
+    assert dict((c.id, why) for c, why in excluded) == {
+        "a": "circular needs: b", "b": "circular needs: a", "c": "waiting for: a"}
+
+
 def test_needs_met_once_done():
     eligible, _ = score_chores([one_off("job", needs=["buy"])], {"buy": ago(1)}, TODAY)
     assert [s.chore.id for s in eligible] == ["job"]

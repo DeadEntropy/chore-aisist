@@ -81,6 +81,11 @@ def score_chores(
         pending = [n for n in chore.needs if not _need_met(n, chore, last_done, types)]
         eligible.append(Scored(chore, round(u, 3), round(u * chore.priority, 3), pending))
 
+    # Needs that loop back on themselves (A needs B, B needs A) can never be planned.
+    for s in _in_cycles(eligible):
+        eligible.remove(s)
+        excluded.append((s.chore, "circular needs: " + ", ".join(s.waits_for)))
+
     # Drop chores waiting for something that can't be planned now (repeat: dropping one can strand another).
     while True:
         ids = {s.chore.id for s in eligible}
@@ -91,11 +96,45 @@ def score_chores(
             eligible.remove(s)
             excluded.append((s.chore, "waiting for: " + ", ".join(n for n in s.waits_for if n not in ids)))
 
+    # Needs inherit the score of whatever waits on them, all the way down a chain (repeat until stable).
     by_id = {s.chore.id: s for s in eligible}
-    for s in sorted(eligible, key=lambda s: -s.score):
-        for n in s.waits_for:
-            by_id[n].score = max(by_id[n].score, s.score)
+    changed = True
+    while changed:
+        changed = False
+        for s in eligible:
+            for n in s.waits_for:
+                if by_id[n].score < s.score:
+                    by_id[n].score = s.score
+                    changed = True
 
-    # Ties: chores others wait for go first.
-    eligible.sort(key=lambda s: (-s.score, len(s.waits_for), -s.chore.priority, s.chore.id))
+    # Ties: prerequisites first, by depth in their chain (C before B before A for A → B → C).
+    depth = _depths(by_id)
+    eligible.sort(key=lambda s: (-s.score, depth[s.chore.id], -s.chore.priority, s.chore.id))
     return eligible, excluded
+
+
+def _depths(by_id: dict[str, Scored]) -> dict[str, int]:
+    """Length of the longest chain of pending needs below each chore (0 = waits for nothing). Assumes no cycles."""
+    depth: dict[str, int] = {}
+
+    def visit(chore_id: str) -> int:
+        if chore_id not in depth:
+            depth[chore_id] = 1 + max((visit(n) for n in by_id[chore_id].waits_for), default=-1)
+        return depth[chore_id]
+
+    for chore_id in by_id:
+        visit(chore_id)
+    return depth
+
+
+def _in_cycles(eligible: list[Scored]) -> list[Scored]:
+    """Chores whose pending needs eventually lead back to themselves."""
+    waits = {s.chore.id: s.waits_for for s in eligible}
+
+    def reaches(start: str, target: str, seen: set[str]) -> bool:
+        for n in waits.get(start, []):
+            if n == target or (n not in seen and (seen.add(n) or reaches(n, target, seen))):
+                return True
+        return False
+
+    return [s for s in eligible if reaches(s.chore.id, s.chore.id, set())]

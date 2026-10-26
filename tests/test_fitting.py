@@ -80,3 +80,14 @@ def test_job_dropped_when_its_purchase_did_not_fit():
 def test_unknown_assignee_is_reported():
     plan = plan_weekend([chore("x", 1, "grandma")], PEOPLE, [], SAT)
     assert plan.unplanned[0][1] == "unknown assignee 'grandma'"
+
+
+def test_three_step_chain_fits_in_one_weekend():
+    from planner.scoring import score_chores
+    from planner.models import Chore
+    mk = lambda id, needs=(): Chore(id=id, name=id, category="garden", type="one_off", duration_h=1, priority=3,
+                                    assignee="nicolas", needs=list(needs), created_on=SAT)
+    scored, _ = score_chores([mk("relay", ["lift"]), mk("lift", ["buy"]), mk("buy")], {}, SAT)
+    items = plan_weekend(scored, PEOPLE, [], SAT).items
+    order = [i.chore.id for i in sorted(items, key=lambda i: i.start)]
+    assert order == ["buy", "lift", "relay"]
