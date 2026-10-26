@@ -45,3 +45,14 @@ def test_blocked_weekend_still_lists_exclusions(capsys):
     print_plan(result, [(walkway, "needs details: duration_h")])
     out = capsys.readouterr().out
     assert "Nobody has free chore time" in out and "Not eligible: walkway (needs details: duration_h)" in out
+
+
+def test_calendar_table_shows_use_and_missing_shares():
+    from planner.cli import calendar_table
+
+    table = calendar_table([("chores", "Chores"), ("work_shared_by_x", "Work")],
+                           {"work_shared_by_x": ("nicolas",), "gone_shared_by_x": ("anna",)})
+    rows = {line.split()[0]: line.split(None, 2)[1:] for line in table.splitlines()[1:]}
+    assert rows["work_shared_by_x"] == ["Work", "nicolas"]
+    assert rows["chores"] == ["Chores", "(not used)"]
+    assert rows["gone_shared_by_x"][0] == "?" and "check the share" in rows["gone_shared_by_x"][1]

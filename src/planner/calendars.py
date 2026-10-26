@@ -11,12 +11,25 @@ from planner.config import CalendarSettings
 from planner.models import CalEvent
 
 
-def fetch_events(settings: CalendarSettings, start: date, end: date) -> list[CalEvent]:
-    """All events on the configured calendars between `start` and `end` (exclusive), recurring ones expanded."""
+def _client(settings: CalendarSettings):
     import caldav    # imported here so the rest of the planner works without it being reachable
 
-    client = caldav.DAVClient(url=settings.url, username=settings.user, password=settings.password,
-                              ssl_verify_cert=settings.ca_cert, timeout=settings.timeout_seconds)
+    return caldav.DAVClient(url=settings.url, username=settings.user, password=settings.password,
+                            ssl_verify_cert=settings.ca_cert, timeout=settings.timeout_seconds)
+
+
+def list_calendars(settings: CalendarSettings) -> list[tuple[str, str]]:
+    """(URI, display name) of every calendar the app user can read: its own and those shared with it."""
+    found = []
+    for cal in _client(settings).principal().calendars():
+        uri = str(cal.url).rstrip("/").rsplit("/", 1)[-1]
+        found.append((uri, cal.get_display_name() or uri))
+    return sorted(found)
+
+
+def fetch_events(settings: CalendarSettings, start: date, end: date) -> list[CalEvent]:
+    """All events on the configured calendars between `start` and `end` (exclusive), recurring ones expanded."""
+    client = _client(settings)
     tz = ZoneInfo(settings.timezone)
     events: list[CalEvent] = []
     for uri, people in settings.calendars:

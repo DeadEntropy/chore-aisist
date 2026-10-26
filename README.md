@@ -4,6 +4,7 @@ Household chore planner: knows the house and garden chores, reads the family cal
 each weekend into a dedicated Nextcloud "Chores" calendar. Completions are reported through Claude Code.
 
 - [DESIGN.md](DESIGN.md) — goals, architecture, data model, planning algorithm, build plan
+- [CALENDAR-GUIDE.md](CALENDAR-GUIDE.md) — **how to use your calendar with the planner**: adding/removing chore time, travel, connecting another calendar
 - [CALENDAR.md](CALENDAR.md) — Nextcloud calendars, the app user, CalDAV access
 
 ## Layout
@@ -75,6 +76,7 @@ planner chore list [--all]               show the catalog
 planner chore add <id> name=... category=home|garden type=recurring|one_off [more fields]
 planner chore set <id> key=value ...     e.g. interval=7,10,14 duration_h=1.5 priority=3
                                               assignee=nicolas|anna|either|both outdoor=yes needs=a,b
+planner calendars                        list the calendars the app can read and whom each blocks
 planner plan --dry-run [--date YYYY-MM-DD] [--weeks N] [--no-calendar]
                                          print the plan for the next 7 days (and the next N-1
                                          periods, assuming planned chores get done), around

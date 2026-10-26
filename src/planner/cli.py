@@ -61,6 +61,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("fields", nargs="+", metavar="key=value")
     p.set_defaults(func=cmd_chore_set)
 
+    p = sub.add_parser("calendars", help="list the calendars the app can read, and who each one blocks")
+    p.set_defaults(func=cmd_calendars)
+
     p = sub.add_parser("plan", help="plan the next 7 days")
     p.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
     p.add_argument("--date", type=date.fromisoformat, help="first day to plan (YYYY-MM-DD); default tomorrow")
@@ -126,6 +129,28 @@ def cmd_chore_set(conn, args, settings):
         db.set_needs(conn, args.id, fields.pop("needs"))
     db.update_chore(conn, args.id, fields)
     print(f"Updated {args.id}")
+
+
+def cmd_calendars(conn, args, settings):
+    cal = load_calendar_settings()
+    if cal is None:
+        raise ValueError("Calendars not configured (CALDAV_URL not set)")
+    try:
+        found = calendars.list_calendars(cal)
+    except Exception as exc:
+        raise ValueError(f"Couldn't read the calendars ({type(exc).__name__}: {exc})") from exc
+    print(calendar_table(found, dict(cal.calendars)))
+
+
+def calendar_table(found: list[tuple[str, str]], configured: dict[str, tuple[str, ...]]) -> str:
+    rows = [["URI (use this in BUSY_CALENDARS)", "NAME", "BLOCKS"]]
+    for uri, name in found:
+        rows.append([uri, name, ", ".join(configured[uri]) if uri in configured else "(not used)"])
+    for uri in configured:
+        if uri not in dict(found):
+            rows.append([uri, "?", "in BUSY_CALENDARS but not visible to the app: check the share"])
+    widths = [max(len(r[i]) for r in rows) for i in range(2)]
+    return "\n".join(f"{r[0].ljust(widths[0])}  {r[1].ljust(widths[1])}  {r[2]}" for r in rows)
 
 
 def cmd_plan(conn, args, settings):

@@ -1,6 +1,7 @@
 # Calendar Access
 
-How the planner (and anyone working on this repo) reads and writes the family calendar.
+How the planner (and anyone working on this repo) reads and writes the family calendar. For what to put in your
+calendar (adding chore time, travel, connecting another calendar), see the user guide: `CALENDAR-GUIDE.md`.
 
 Placeholders in angle brackets (`<nextcloud-host>`, `<app-user>`, …) stand for site-specific values. The real values
 live in the local `.env` (gitignored) and in private notes kept outside this repository.
