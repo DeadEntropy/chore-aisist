@@ -75,7 +75,7 @@ services:
       # Weather for outdoor chores: optional, leave WEATHER_LATITUDE unset in .env for none.
       WEATHER_LATITUDE: ${WEATHER_LATITUDE:-}
       WEATHER_LONGITUDE: ${WEATHER_LONGITUDE:-}
-      WEATHER_DAYS: ${WEATHER_DAYS:-3}
+      WEATHER_DAYS: ${WEATHER_DAYS:-10}
       WEATHER_MODELS: ${WEATHER_MODELS:-ecmwf_ifs025,best_match}
       MAX_RAIN_PERCENT: ${MAX_RAIN_PERCENT:-20}
       MAX_FEELS_LIKE_C: ${MAX_FEELS_LIKE_C:-35}

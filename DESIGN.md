@@ -268,9 +268,10 @@ The outdoor chore then tries the next quarter hour, the next free time, the next
 with the reason (`weather whenever it would fit (Sun 01 Nov 08:00: rain 33% > 20%)`) and comes back on a later run.
 Indoor chores ignore the weather.
 
-- **Horizon:** the forecast is used for today and the next `WEATHER_DAYS` (3) days only; further out it's too
-  unreliable, so those days are planned as if the weather were fine. The daily re-plan applies the forecast as a
-  day comes near: a Sunday is first checked by Thursday evening's run.
+- **Horizon:** the forecast is used wherever it exists: today and the next `WEATHER_DAYS` (10) days, more than the
+  7 days a plan covers. (A 3-day limit, because forecasts a week out are unreliable, was tried and dropped: the
+  daily re-plan follows the forecast anyway, so a chore kept off a day that turns dry comes back to it.) Lower
+  `WEATHER_DAYS` to ignore far-off forecasts.
 - **Models:** weather models disagree, a lot in the Florida rainy season. `WEATHER_MODELS` lists Open-Meteo models in
   order of preference; each value comes from the first that has it. Default `ecmwf_ifs025,best_match`: ECMWF
   matched the phone's forecast best when it was chosen; it has no UV index, which then comes from `best_match`.
@@ -500,4 +501,4 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - **Not before**: a single optional date per chore (`not_before`) for "do this in early December"; not a season or a
   deadline. Priority decides how soon after the date it gets done.
 - **Weather**: only outdoor chores; average chance of rain over the chore ≤ 20%, no hour over 35 °C feels-like or UV 7;
-  forecast used for the next 3 days only; ECMWF first; a missing forecast never stops the plan.
+  forecast used wherever it exists (10 days); ECMWF first; a missing forecast never stops the plan.

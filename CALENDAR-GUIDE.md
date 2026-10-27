@@ -193,8 +193,8 @@ A skip doesn't reset the chore's clock: it stays due and comes back.
 ## 5. The weather (outdoor chores)
 
 Outdoor chores (`outdoor=yes` in the chore list) are kept out of rain, heat and strong sun, using the hourly
-forecast for **today and the next 3 days** (`WEATHER_DAYS`). Further out the forecast is too unreliable, so the
-planner ignores it; the evening re-plan applies it as the day comes near (a Sunday is checked from Thursday evening).
+forecast for the whole week planned (`WEATHER_DAYS`, 10 days). The forecast changes: every evening's re-plan uses the
+latest one, so a chore kept off a day that turns dry can come back to it, and the other way round.
 
 An outdoor chore doesn't go at a time when:
 - the **chance of rain, averaged over the chore**, is over 20% (`MAX_RAIN_PERCENT`). A 3-hour chore with 40% in the
@@ -230,7 +230,7 @@ container keeps the settings it started with until it's recreated.
 | `TRAVEL_KEYWORDS` | `travel,trip,away` | All-day titles that mean away |
 | `REMINDER_MINUTES` | `30` | Phone reminder before each planned chore (0 = none) |
 | `WEATHER_LATITUDE`, `WEATHER_LONGITUDE` | unset | Where the chores happen; unset = no weather |
-| `WEATHER_DAYS` | `3` | Forecast used for today and this many days after (0 = today only) |
+| `WEATHER_DAYS` | `10` | Forecast used for today and this many days after (0 = today only); lower it to ignore far-off forecasts |
 | `WEATHER_MODELS` | `ecmwf_ifs025,best_match` | [Open-Meteo models](https://open-meteo.com/en/docs), preferred first; each value comes from the first that has it |
 | `MAX_RAIN_PERCENT` | `20` | Highest average chance of rain over an outdoor chore |
 | `MAX_FEELS_LIKE_C` | `35` | Hottest feels-like temperature (°C) in any hour of an outdoor chore |

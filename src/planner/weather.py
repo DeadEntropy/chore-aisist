@@ -5,8 +5,9 @@
 weather models disagree, and not every model has every value, e.g. ECMWF has no UV index), `check` says why a time is too wet, too hot or too sunny for an
 outdoor chore (or None when it's fine), `day_summary` describes a day for `planner plan --dry-run`.
 
-The forecast is only used for today and the next `WeatherSettings.days` days: further out it's too unreliable, so
-those days are planned as if the weather were fine, and the daily re-plan applies the forecast as the day comes near.
+The forecast is used for today and the next `WeatherSettings.days` days (by default 10, more than the 7 days a plan
+covers: wherever there is a forecast); days past it are planned as if the weather were fine. The daily re-plan
+applies the latest forecast, so a chore moves again if the forecast changes.
 """
 
 import json

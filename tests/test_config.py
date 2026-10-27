@@ -99,7 +99,7 @@ def test_weather_settings_defaults(weather_env):
     w = config.load_weather_settings()
     assert w.models == ("ecmwf_ifs025", "best_match")
     assert (w.latitude, w.longitude, w.days, w.max_rain_percent, w.max_feels_like_c, w.max_uv_index) == \
-        (10.5, -20.25, 3, 20, 35, 7)
+        (10.5, -20.25, 10, 20, 35, 7)
 
 
 @pytest.mark.parametrize("values", [{"WEATHER_LATITUDE": "10"}, {"WEATHER_LATITUDE": "95", "WEATHER_LONGITUDE": "0"},
