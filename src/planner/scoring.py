@@ -56,6 +56,7 @@ def score_chores(
     last_done: dict[str, date],
     today: date,
     next_available: date | None = None,
+    until: date | None = None,
 ) -> tuple[list[Scored], list[tuple[Chore, str]]]:
     """Return (eligible chores sorted by score, highest first; excluded chores with the reason).
 
@@ -66,6 +67,10 @@ def score_chores(
     A chore whose needs aren't done yet stays eligible if every pending need is itself eligible: fitting then
     places it after them on the same weekend. Each pending need inherits the job's score if that is higher,
     so a purchase is never ranked below the job it unlocks.
+
+    A chore with `not_before` after `until` (the last day being planned; default `today`) is held back and listed
+    as excluded; fitting keeps it off the days before that date. A one-off waits from `not_before`, not from when it
+    was added, so it doesn't arrive already urgent.
     """
     eligible: list[Scored] = []
     excluded: list[tuple[Chore, str]] = []
@@ -77,6 +82,9 @@ def score_chores(
             continue                                         # finished for good
         if missing := missing_details(chore):
             excluded.append((chore, "needs details: " + ", ".join(missing)))
+            continue
+        if chore.not_before is not None and chore.not_before > (until or today):
+            excluded.append((chore, f"not before {chore.not_before:%a %d %b %Y}"))
             continue
         if chore.type == "recurring":
             last = last_done.get(chore.id)
@@ -92,7 +100,7 @@ def score_chores(
             if u is None:
                 continue                                     # not due yet
         else:
-            u = urgency_one_off(chore.created_on, today)
+            u = urgency_one_off(max(filter(None, (chore.created_on, chore.not_before)), default=None), today)
         pending = [n for n in chore.needs if not _need_met(n, chore, last_done, types)]
         eligible.append(Scored(chore, round(u, 3), round(u * chore.priority, 3), pending))
 

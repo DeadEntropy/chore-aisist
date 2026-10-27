@@ -3,7 +3,8 @@
 Greedy: take chores from highest score down and give each one the earliest free slot that fits that person (or both,
 for 'both' chores). Earliest-first keeps re-plans stable: a daily run that adds a new day at the end of the window
 doesn't pull chores away from tomorrow. Free time comes from `availability`; there is no hours budget. A chore
-waiting for another (e.g. a job and its purchase) is only placed after that one ends.
+waiting for another (e.g. a job and its purchase) is only placed after that one ends, and a chore with a
+`not_before` date is not placed on an earlier day.
 """
 
 from datetime import date, datetime, time, timedelta
@@ -24,6 +25,9 @@ def plan_period(scored: list[Scored], people: list[Person], days: list[date],
             unplanned.append((s.chore, "needs " + ", ".join(missing) + " first, which didn't fit"))
             continue
         not_before = max((placed_end[n] for n in s.waits_for), default=None)
+        if s.chore.not_before is not None:
+            held = datetime.combine(s.chore.not_before, time(0))
+            not_before = max(not_before, held) if not_before else held
         groups = _candidate_groups(s.chore.assignee, people, days, free)
         if not groups:
             unplanned.append((s.chore, f"unknown assignee '{s.chore.assignee}'"))

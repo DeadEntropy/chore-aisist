@@ -163,3 +163,40 @@ def test_job_is_not_pushed_behind_unrelated_chores_on_a_tie():
 def test_needs_met_once_done():
     eligible, _ = score_chores([one_off("job", needs=["buy"])], {"buy": ago(1)}, TODAY)
     assert [s.chore.id for s in eligible] == ["job"]
+
+
+# --- not_before ---------------------------------------------------------------
+
+def test_not_before_holds_a_chore_back_until_the_period_reaches_it():
+    car = one_off("car", not_before=date(2026, 12, 1))
+    eligible, excluded = score_chores([car], {}, TODAY, until=TODAY + timedelta(days=6))
+    assert eligible == []
+    assert [(c.id, why) for c, why in excluded] == [("car", "not before Tue 01 Dec 2026")]
+    eligible, _ = score_chores([car], {}, date(2026, 11, 28), until=date(2026, 12, 4))
+    assert [s.chore.id for s in eligible] == ["car"]
+
+
+def test_not_before_defaults_to_today_without_until():
+    eligible, _ = score_chores([one_off("car", not_before=TODAY + timedelta(days=1))], {}, TODAY)
+    assert eligible == []
+    eligible, _ = score_chores([one_off("car", not_before=TODAY)], {}, TODAY)
+    assert [s.chore.id for s in eligible] == ["car"]
+
+
+def test_one_off_waits_from_not_before_not_from_when_it_was_added():
+    car = one_off("car", created=ago(35), not_before=TODAY)
+    eligible, _ = score_chores([car], {}, TODAY)
+    assert eligible[0].urgency == pytest.approx(0.5)              # fresh, not 5 weeks old
+
+
+def test_not_before_in_the_past_changes_nothing():
+    old = one_off("fix", created=ago(14), not_before=ago(21))
+    eligible, _ = score_chores([old], {}, TODAY)
+    assert eligible[0].urgency == pytest.approx(0.9)              # still waiting since it was added
+
+
+def test_job_waits_for_a_need_that_is_held_back():
+    chores = [one_off("install", needs=["buy"]), one_off("buy", not_before=TODAY + timedelta(days=30))]
+    eligible, excluded = score_chores(chores, {}, TODAY)
+    assert eligible == []
+    assert dict((c.id, why) for c, why in excluded)["install"] == "waiting for: buy"

@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("fields", nargs="+", metavar="key=value")
     p.set_defaults(func=cmd_chore_add)
 
-    p = chore.add_parser("set", help="edit a chore: planner chore set <id> duration_h=3 needs=buy-caulk")
+    p = chore.add_parser("set", help="edit a chore: planner chore set <id> duration_h=3 needs=buy-caulk not_before=2026-12-01")
     p.add_argument("id")
     p.add_argument("fields", nargs="+", metavar="key=value")
     p.set_defaults(func=cmd_chore_set)
@@ -106,13 +106,14 @@ def cmd_export(conn, args, settings):
 def cmd_chore_list(conn, args, settings):
     done = db.done_chore_ids(conn)
     chores = db.get_chores(conn, include_inactive=args.all)
-    rows = [["ID", "TYPE", "EVERY (DAYS)", "HOURS", "PRIO", "WHO", "OUT", "NEEDS", "STATUS"]]
+    rows = [["ID", "TYPE", "EVERY (DAYS)", "HOURS", "PRIO", "WHO", "OUT", "NEEDS", "FROM", "STATUS"]]
     for c in chores:
         every = (f"{c.interval_min_days}-{c.interval_target_days}-{c.interval_max_days}"
                  if c.interval_min_days is not None else "")
         status = "done" if c.type == "one_off" and c.id in done else ("retired" if not c.active else "")
         rows.append([c.id, c.type, every, _fmt(c.duration_h), _fmt(c.priority), c.assignee or "",
-                     "yes" if c.outdoor else "", ",".join(c.needs), status])
+                     "yes" if c.outdoor else "", ",".join(c.needs),
+                     c.not_before.isoformat() if c.not_before else "", status])
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
         print("  ".join(v.ljust(w) for v, w in zip(r, widths)).rstrip())
@@ -369,6 +370,8 @@ def parse_fields(pairs: list[str]) -> dict:
             out[key] = None if empty else float(value)
         elif key == "priority":
             out[key] = None if empty else int(value)
+        elif key == "not_before":
+            out[key] = None if empty else date.fromisoformat(value)
         elif key in ("name", "category", "type", "assignee"):
             out[key] = None if empty else value
         else:

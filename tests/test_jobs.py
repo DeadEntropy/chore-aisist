@@ -90,3 +90,14 @@ def test_nothing_is_planned_before_now():
     now = datetime(2026, 10, 31, 13, 20)                  # Saturday 13:20
     results = plan_periods([one_off("fix", hours=1)], PERSONS, {}, now.date(), 1, [], 30, PLANNING, not_before=now)
     assert results[0].plan.items[0].start >= now
+
+
+def test_not_before_plans_the_chore_in_the_first_period_that_reaches_it():
+    car = one_off("car", hours=2)
+    car.not_before = date(2026, 11, 8)                    # a Sunday, in the second period (Fri 6 – Thu 12 Nov)
+    results = plan_periods([car], PERSONS, {}, START, 3, [], 30, PLANNING)
+    assert results[0].plan.items == []
+    assert [(c.id, why) for c, why in results[0].excluded] == [("car", "not before Sun 08 Nov 2026")]
+    item, = results[1].plan.items
+    assert item.start == datetime(2026, 11, 8, 8, 0)      # Sunday, not Saturday 7th
+    assert results[2].plan.items == []                    # done in period 2, so it's gone

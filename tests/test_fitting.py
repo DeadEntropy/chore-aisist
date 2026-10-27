@@ -108,3 +108,20 @@ def test_three_step_chain_in_order():
     scored, _ = score_chores([mk("relay", ["lift"]), mk("lift", ["buy"]), mk("buy")], {}, SAT)
     order = [i.chore.id for i in sorted(plan_period(scored, PEOPLE, DAYS, free()).items, key=lambda i: i.start)]
     assert order == ["buy", "lift", "relay"]
+
+
+def test_not_before_keeps_a_chore_off_earlier_days():
+    s = chore("car", 2, "nicolas", score=15)
+    s.chore.not_before = SUN
+    plan = plan_period([s], PEOPLE, DAYS, free())
+    assert plan.items[0].start == at(SUN, "08:00")
+
+
+def test_not_before_and_needs_both_apply():
+    buy = chore("buy", 1, "nicolas", score=5)
+    job = chore("job", 1, "nicolas", score=5)
+    job.waits_for = ["buy"]
+    job.chore.not_before = SUN
+    plan = plan_period([buy, job], PEOPLE, DAYS, free())
+    starts = {i.chore.id: i.start for i in plan.items}
+    assert starts == {"buy": at(SAT, "08:00"), "job": at(SUN, "08:00")}

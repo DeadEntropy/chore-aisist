@@ -106,6 +106,7 @@ def chore_from_json(item: dict) -> Chore:
         priority=item.get("priority"),
         assignee=item.get("assignee"),
         outdoor=bool(item.get("outdoor", False)),
+        not_before=date.fromisoformat(item["not_before"]) if item.get("not_before") else None,
         needs=list(item.get("needs", [])),
         active=bool(item.get("active", True)),
     )
@@ -129,5 +130,6 @@ def chore_to_json(chore: Chore, done_ids: set[str]) -> dict:
         "assignee": chore.assignee,
         "outdoor": chore.outdoor,
         "needs": chore.needs,
+        **({"not_before": chore.not_before.isoformat()} if chore.not_before else {}),
         **({} if chore.active else {"active": False}),
     }
