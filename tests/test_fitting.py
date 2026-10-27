@@ -125,3 +125,16 @@ def test_not_before_and_needs_both_apply():
     plan = plan_period([buy, job], PEOPLE, DAYS, free())
     starts = {i.chore.id: i.start for i in plan.items}
     assert starts == {"buy": at(SAT, "08:00"), "job": at(SUN, "08:00")}
+
+
+def test_every_start_is_on_a_quarter_hour():
+    first, second = chore("short", 1 / 3, "nicolas", 5), chore("next", 1 / 3, "nicolas", 4)    # 20 minutes each
+    plan = plan_period([first, second], PEOPLE, DAYS, free(nicolas_sat=[(8 * 60 + 40, 18 * 60)]))
+    starts = {i.chore.id: i.start for i in plan.items}
+    assert starts == {"short": at(SAT, "08:45"), "next": at(SAT, "09:15")}      # not 08:40 and 09:05
+
+
+def test_a_quarter_hour_start_must_still_fit():
+    plan = plan_period([chore("hour", 1, "nicolas")], PEOPLE, DAYS,
+                       free(nicolas_sat=[(8 * 60 + 10, 9 * 60 + 10)], nicolas_sun=[]))
+    assert plan.items == [] and plan.unplanned[0][1] == "no free slot long enough"   # 08:15–09:15 doesn't fit

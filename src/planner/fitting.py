@@ -12,6 +12,12 @@ from datetime import date, datetime, time, timedelta
 from planner.availability import Slots, intersect, subtract
 from planner.models import Person, Plan, PlannedItem, Scored
 
+START_STEP_MINUTES = 15     # every chore starts on a quarter hour (:00, :15, :30, :45)
+
+
+def round_up(minutes: int, step: int = START_STEP_MINUTES) -> int:
+    return -(-minutes // step) * step
+
 
 def plan_period(scored: list[Scored], people: list[Person], days: list[date],
                 free: dict[tuple[str, date], Slots], ready_at: dict[str, datetime] | None = None) -> Plan:
@@ -67,7 +73,8 @@ def _candidate_groups(assignee: str, people: list[Person], days: list[date],
 
 
 def _earliest_slot(group, days, free, duration, not_before=None) -> tuple[date, int] | None:
-    """The earliest slot long enough where everyone in the group is free (at or after `not_before`, if given)."""
+    """The earliest slot long enough where everyone in the group is free (at or after `not_before`, if given),
+    starting on a quarter hour."""
     for day in days:
         earliest = 0
         if not_before is not None:
@@ -78,7 +85,8 @@ def _earliest_slot(group, days, free, duration, not_before=None) -> tuple[date, 
         common = free[(group[0], day)]
         for p in group[1:]:
             common = intersect(common, free[(p, day)])
-        fitting = [max(start, earliest) for start, end in common if end - max(start, earliest) >= duration]
+        fitting = [round_up(max(start, earliest)) for start, end in common
+                   if end - round_up(max(start, earliest)) >= duration]
         if fitting:
             return day, fitting[0]
     return None

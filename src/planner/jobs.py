@@ -14,12 +14,11 @@ from pathlib import Path
 from planner import backup, calendars, db, plans, scheduler
 from planner.availability import first_available_day, first_default_day, free_slots, subtract
 from planner.config import BackupSettings, CalendarSettings, PlanningSettings, Settings
-from planner.fitting import plan_period
+from planner.fitting import START_STEP_MINUTES, plan_period, round_up
 from planner.models import CalEvent, Chore, Completion, Person, Plan, PlannedRecord, RunRecord
 from planner.scoring import score_chores
 
 PERIOD_DAYS = 7
-START_STEP_MINUTES = 15    # planning "from now" starts at the next quarter hour, so events start on :00/:15/:30/:45
 LOOKAHEAD_DAYS = 42        # how far past a period to look for the next day anyone can do chores
 
 
@@ -49,8 +48,7 @@ def dry_run(conn, start: date, periods: int, events: list[CalEvent], buffer_minu
     """Load chores, people and history from the database, then `plan_periods` without writing anything.
     Planning from today starts at `now`; chores in progress aren't planned again."""
     _, in_progress = plans.freeze(_saved(conn, now.date()), now)
-    chores = [c for c in db.get_chores(conn) if c.id not in {r.chore_id for r in in_progress}]
-    return plan_periods(chores, db.get_people(conn), db.last_done_dates(conn), start, periods, events,
+    return plan_periods(db.get_chores(conn), db.get_people(conn), db.last_done_dates(conn), start, periods, events,
                         buffer_minutes, planning, not_before=now if start <= now.date() else None,
                         in_progress=in_progress)
 
@@ -72,8 +70,7 @@ def run_plan(conn, cal, planning: PlanningSettings, now: datetime, events: list[
         start = now.date()
         records = _saved(conn, start)
         to_unknown, in_progress = plans.freeze(records, now)
-        chores = [c for c in db.get_chores(conn) if c.id not in {r.chore_id for r in in_progress}]
-        result = plan_periods(chores, db.get_people(conn), db.last_done_dates(conn), start, 1, events,
+        result = plan_periods(db.get_chores(conn), db.get_people(conn), db.last_done_dates(conn), start, 1, events,
                               cal.buffer_minutes, planning, not_before=now, in_progress=in_progress)[0]
         changes = plans.reconcile(records, result.plan.items, now)
 
@@ -293,12 +290,15 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
     """Plan `periods` consecutive 7-day periods from `start` (pure: no database, no network).
 
     With `not_before` (normally now), nothing is planned before the next quarter hour after it. `in_progress` items
-    (started, not reported, not ended; their chores aren't in `chores`) keep their people's time taken, and chores
-    that need them are planned after they end. From the second period on, every chore planned in the period before
-    (or in progress) is assumed done on its day.
+    (started, not reported, not ended) aren't planned again in the period they're in; they keep their people's time
+    taken there, and chores that need them are planned after they end. From the next period on (and in a preview
+    that starts after them), they and every chore planned in the period before are assumed done on their day.
     """
     person_ids = [p.id for p in people]
     last_done = dict(last_done)
+    for r in in_progress:
+        if r.start.date() < start:                           # a preview starting later: it will be done by then
+            last_done[r.chore_id] = r.start.date()
     results = []
     for k in range(periods):
         first = start + timedelta(days=PERIOD_DAYS * k)
@@ -334,8 +334,7 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
     return results
 
 
-def round_up(minutes: int, step: int) -> int:
-    return -(-minutes // step) * step
+
 
 
 def next_available(people: list[str], last_day: date, events: list[CalEvent], buffer_minutes: int,

@@ -73,14 +73,15 @@ def score_chores(
     as excluded; fitting keeps it off the days before that date. A one-off waits from `not_before`, not from when it
     was added, so it doesn't arrive already urgent.
 
-    `in_progress` are chores whose planned item has already started (not in `chores`): a chore that needs one of
-    them counts as waiting for it, and fitting places it after that item ends.
+    `in_progress` are chores whose planned item has already started: they aren't placed again (but stay in `chores`
+    so their type still counts for the needs rules), and a chore that needs one of them counts as waiting for it;
+    fitting places it after that item ends.
     """
     eligible: list[Scored] = []
     excluded: list[tuple[Chore, str]] = []
     types = {c.id: c.type for c in chores}
     for chore in chores:
-        if not chore.active:
+        if not chore.active or chore.id in in_progress:
             continue
         if chore.type == "one_off" and chore.id in last_done:
             continue                                         # finished for good

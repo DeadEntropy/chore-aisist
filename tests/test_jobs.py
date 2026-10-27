@@ -177,3 +177,38 @@ def test_a_job_can_follow_a_need_in_progress():
     item, = results[0].plan.items
     assert item.start == datetime(2026, 10, 31, 11)                              # waits for the order to end
     assert results[0].excluded == []
+
+
+def test_an_in_progress_chore_comes_back_in_later_periods_of_a_preview():
+    now = datetime(2026, 10, 31, 10, 0)
+    weekly = recurring("water", 7, 7, 7)                  # due every 7 days
+    doing = _in_progress("water", datetime(2026, 10, 31, 9), datetime(2026, 10, 31, 11))
+    results = plan_periods([weekly], PERSONS, {}, now.date(), 2, [], 30, PLANNING, not_before=now,
+                           in_progress=[doing])
+    assert results[0].plan.items == []                    # in progress this period: not planned again
+    assert [i.start.date() for i in results[1].plan.items] == [date(2026, 11, 7)]   # due again a week later
+
+
+def test_a_preview_starting_later_keeps_dependents_of_an_in_progress_chore():
+    now = datetime(2026, 10, 31, 10, 0)
+    order = _in_progress("order", datetime(2026, 10, 31, 9), datetime(2026, 10, 31, 11))
+    job = Chore(id="mulch", name="mulch", category="garden", type="one_off", duration_h=1, priority=3,
+                assignee="nicolas", created_on=SAT, needs=["order"])
+    order_chore = one_off("order")
+    results = plan_periods([job, order_chore], PERSONS, {}, date(2026, 11, 6), 1, [], 30, PLANNING,
+                           in_progress=[order])                  # preview from next Friday
+    assert [i.chore.id for i in results[0].plan.items] == ["mulch"]   # the order counts as done by then
+
+
+def test_an_in_progress_need_still_follows_the_recurring_needs_rule():
+    # mulch was last done after the last trim, so the trim must be done again first: the one in progress counts,
+    # and the mulch must wait for it to end (not start before it, on the strength of the old trim).
+    now = datetime(2026, 10, 31, 10, 0)
+    trim = recurring("trim", 7, 10, 14)
+    mulch = recurring("mulch", 7, 10, 14, needs=["trim"])
+    doing = _in_progress("trim", datetime(2026, 10, 31, 10), datetime(2026, 10, 31, 12))
+    last = {"trim": SAT - timedelta(days=30), "mulch": SAT - timedelta(days=20)}
+    results = plan_periods([trim, mulch], PERSONS, last, now.date(), 1, [], 30, PLANNING, not_before=now,
+                           in_progress=[doing])
+    item, = results[0].plan.items
+    assert item.chore.id == "mulch" and item.start >= datetime(2026, 10, 31, 12)

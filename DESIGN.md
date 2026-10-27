@@ -413,7 +413,7 @@ Every run is idempotent: with nothing changed (no new events, no reports, same t
 same items with the same UIDs and writes nothing to the calendar. Items are matched by chore and day, so moving a
 chore within a day updates its event in place; only a new item gets a new UID.
 
-Re-planning "from now" starts at the next quarter hour (`START_STEP_MINUTES`). Items in progress (started, not
+Every chore starts on a quarter hour (`fitting.START_STEP_MINUTES`), including re-planning "from now". Items in progress (started, not
 reported, not ended) keep their people's time taken and count as placed for the chores that need them, so a series
 of reports minutes apart never stacks chores on top of each other.
 
