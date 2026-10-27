@@ -19,7 +19,8 @@ src/planner/
   availability.py  free chore time per person and day (default windows + calendar keywords)
   fitting.py    who does what, when, in the free time
   calendars.py  reads the family calendars from Nextcloud (CalDAV) → busy time and travel
-  jobs.py       ties it together (dry runs today; the weekly run later)
+  plans.py      the saved plan: freeze/unknown rules, re-planning, Chores calendar events
+  jobs.py       ties it together: plan runs, done/skip, calendar sync
   cli.py        the `planner` command
   migrations/   schema changes, applied in name order by `planner migrate`
 tests/          pytest; database tests need a throwaway MariaDB (see below)
@@ -27,7 +28,7 @@ deploy/         compose template + .env.example for the deployment folder
 chores.json     seed data, loaded once with `planner import`
 ```
 
-Later phases add writing the Chores calendar and the scheduler (see DESIGN.md §10).
+A later phase adds the scheduler (daily 20:00 run) and the weekly brief (see DESIGN.md §10).
 
 ## Development
 
@@ -61,7 +62,8 @@ docker rm -f chore-test-db
 `planner plan` reads the family calendars over CalDAV as the `ChoreAisist` user (settings in `.env`, see
 `.env.example`). The Nextcloud certificate only covers its hostname, so the machine running the planner must resolve
 `nextcloud.local`: the Docker setup maps it with `extra_hosts`; elsewhere add an `/etc/hosts` entry, or use
-`--no-calendar`. Live check (read-only): `CALDAV_LIVE_TEST=1 .venv/bin/pytest tests/test_calendars_live.py`.
+`--no-calendar`. Live check (reads the calendars, and writes one event dated 5 Jan 2030 to the Chores calendar,
+then deletes it): `CALDAV_LIVE_TEST=1 .venv/bin/pytest tests/test_calendars_live.py`.
 
 ## Commands
 
@@ -77,6 +79,10 @@ planner chore add <id> name=... category=home|garden type=recurring|one_off [mor
 planner chore set <id> key=value ...     e.g. interval=7,10,14 duration_h=1.5 priority=3
                                               assignee=nicolas|anna|either|both outdoor=yes needs=a,b
 planner calendars                        list the calendars the app can read and whom each blocks
+planner plan                             plan the next 7 days, save it, update the Chores calendar
+planner done <chore> [--date D] [--by nicolas,anna]   record a chore as done (✅ in the calendar)
+planner skip <chore> [--date D]          record a chore as skipped (⏭)
+planner status                           last/next 7 days with ✅ ⏭ ❔ 🧹, and what's overdue
 planner plan --dry-run [--date YYYY-MM-DD] [--weeks N] [--no-calendar]
                                          print the plan for the next 7 days (and the next N-1
                                          periods, assuming planned chores get done), around

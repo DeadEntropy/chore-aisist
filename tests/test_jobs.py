@@ -84,3 +84,9 @@ def test_busy_events_listed_only_on_days_with_chore_time():
     trip = all_day("away", BOTH, date(2026, 11, 3), 2, "Trip")                 # a weekday trip is still shown
     results = plan_periods([], PERSONS, {}, START, 1, [weekday, weekend, trip], 30, PLANNING)
     assert [e.summary for e in results[0].events] == ["Party", "Trip"]
+
+
+def test_nothing_is_planned_before_now():
+    now = datetime(2026, 10, 31, 13, 20)                  # Saturday 13:20
+    results = plan_periods([one_off("fix", hours=1)], PERSONS, {}, now.date(), 1, [], 30, PLANNING, not_before=now)
+    assert results[0].plan.items[0].start >= now

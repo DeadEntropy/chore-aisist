@@ -9,7 +9,7 @@ description = "Household chore planner: plans weekend chores into a Nextcloud ca
 requires-python = ">=3.12"
 dependencies = [
   "pymysql>=1.1",
-  "caldav>=1.4",
+  "caldav>=3.6",
   "python-dotenv>=1.0",
 ]
 

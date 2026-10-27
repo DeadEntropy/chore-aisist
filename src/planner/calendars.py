@@ -1,6 +1,7 @@
-"""Everything CalDAV: read the family calendars and classify their events. (Writing the Chores calendar: phase 3.)
+"""Everything CalDAV: read the family calendars and classify their events; read and write the Chores calendar.
 
-`fetch_events` is the only function that talks to Nextcloud; the rest is pure and tested without a network.
+`list_calendars`, `fetch_events`, `chore_events` and `write_chore_events` talk to Nextcloud; the rest is pure and
+tested without a network.
 """
 
 import re
@@ -9,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from planner.config import CalendarSettings
 from planner.models import CalEvent
+from planner.plans import EventData, build_ics, event_from_component, is_ours
 
 
 def _client(settings: CalendarSettings):
@@ -25,6 +27,34 @@ def list_calendars(settings: CalendarSettings) -> list[tuple[str, str]]:
         uri = str(cal.url).rstrip("/").rsplit("/", 1)[-1]
         found.append((uri, cal.get_display_name() or uri))
     return sorted(found)
+
+
+def _chores_calendar(settings: CalendarSettings):
+    return _client(settings).calendar(url=f"{settings.url}/calendars/{settings.user}/{settings.chores_calendar}/")
+
+
+def chore_events(settings: CalendarSettings, start: date, end: date) -> dict:
+    """The planner's events in the Chores calendar between `start` and `end`, keyed by UID."""
+    tz = ZoneInfo(settings.timezone)
+    found = _chores_calendar(settings).search(event=True, start=datetime.combine(start, time(0), tzinfo=tz),
+                                              end=datetime.combine(end, time(0), tzinfo=tz))
+    events = {}
+    for item in found:
+        event = event_from_component(item.icalendar_component, tz)
+        if is_ours(event.uid):
+            events[event.uid] = event
+    return events
+
+
+def write_chore_events(settings: CalendarSettings, put: list[EventData], delete: list[str]) -> None:
+    """Create or update `put` and delete the `delete` UIDs in the Chores calendar."""
+    tz = ZoneInfo(settings.timezone)
+    calendar = _chores_calendar(settings)
+    for event in put:
+        calendar.add_event(ical=build_ics(event, tz), increase_seqno=False)
+    for uid in delete:
+        if is_ours(uid):                                   # never delete anything the planner didn't create
+            calendar.event_by_uid(uid).delete()
 
 
 def fetch_events(settings: CalendarSettings, start: date, end: date) -> list[CalEvent]:

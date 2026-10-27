@@ -46,7 +46,12 @@ def test_both_needs_a_common_slot():
     plan = plan_period([chore("together", 2, "both")], PEOPLE, DAYS, free(anna_sat=[(12 * 60, 18 * 60)]))
     item = plan.items[0]
     assert item.people == ["nicolas", "anna"]
-    assert item.start == at(SUN, "08:00")        # Sunday has more common free time (10 h vs 6 h)
+    assert item.start == at(SAT, "12:00")        # earliest time both are free
+
+
+def test_earliest_day_first():
+    plan = plan_period([chore("a", 1, "nicolas", 3), chore("b", 1, "nicolas", 2)], PEOPLE, DAYS, free())
+    assert [(i.chore.id, i.start) for i in plan.items] == [("a", at(SAT, "08:00")), ("b", at(SAT, "09:00"))]
 
 
 def test_either_goes_to_person_with_more_free_time_left():

@@ -54,6 +54,8 @@ services:
       DAY_OFF_KEYWORDS: ${DAY_OFF_KEYWORDS:-day off,holiday}
       CHORE_TIME_KEYWORDS: ${CHORE_TIME_KEYWORDS:-chore}
       CALDAV_TIMEOUT_SECONDS: ${CALDAV_TIMEOUT_SECONDS:-30}
+      CHORES_CALENDAR_URI: ${CHORES_CALENDAR_URI:-chores}
+      REMINDER_MINUTES: ${REMINDER_MINUTES:-30}
     extra_hosts:
       # The server may not resolve Nextcloud's name, and its certificate only covers the name, not the IP.
       # NEXTCLOUD_HOST must match the host in CALDAV_URL.

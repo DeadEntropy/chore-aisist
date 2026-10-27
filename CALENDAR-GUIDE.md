@@ -4,7 +4,7 @@ This is the user guide: what to put in your calendar so the planner books chores
 connect another calendar (e.g. work). For the technical side (CalDAV, shares, credentials) see `CALENDAR.md`.
 
 The planner only **reads** your calendars. It never changes your events. (From phase 3 it writes its own plan to
-the separate **Chores** calendar, which you can see but not edit.)
+the separate **Chores** calendar, which you can see but not edit; see section 4.)
 
 ## 1. The basics
 
@@ -149,7 +149,43 @@ docker compose run --rm chore-aisist plan --dry-run   # work events show up as "
 **To disconnect a calendar,** remove its entry from `BUSY_CALENDARS`. You can also remove the share or subscription
 in Nextcloud.
 
-## 4. Settings
+## 4. The Chores calendar (what the planner writes)
+
+`planner plan` saves the plan for the next 7 days and shows it in the **Chores** calendar, which you and Anna see
+read-only. Each chore is a timed event with a reminder 30 minutes before (`REMINDER_MINUTES`):
+
+| Title | Meaning |
+|---|---|
+| `🧹 Mow the lawn (Nicolas)` | planned |
+| `✅ Mow the lawn (Nicolas)` | done (reported) |
+| `⏭ Mow the lawn (Nicolas)` | skipped (reported) |
+| `❔ Mow the lawn (Nicolas)` | its time passed and nobody reported it |
+
+How re-planning works. The planner re-plans **from the current moment** to the end of a 7-day window: every evening
+(from phase 4; for now you run `planner plan`), and **right after every `done` / `skip`**.
+- Chores that already started are fixed: nothing in the past is moved or deleted.
+- Chores still planned (🧹) from now on are re-planned: kept if nothing changed, moved if your calendar changed,
+  removed if they no longer fit, and new ones are added. Chores go in the **earliest** free slot, so tomorrow's plan
+  doesn't change just because a new day appears at the end of the window.
+- A planned chore whose time has passed without a report becomes ❔ and goes back into the pool, so it can be
+  planned again (e.g. on the next day). If you did it, report it, even later: it turns ✅, and the re-plan that
+  follows removes any copy that was planned again.
+- ✅ and ⏭ are never changed: they're the history.
+
+Example: on Saturday evening nothing has been reported yet, so the 20:00 run marks Saturday's chores ❔ and plans some
+of them again on Sunday. On Sunday morning you tell Claude Code "I did all of Saturday's chores": they turn ✅ and
+Sunday goes back to its original plan.
+
+**Reporting** is done through Claude Code (or the commands directly):
+```bash
+docker compose run --rm chore-aisist done weed-pool-deck              # today, by whoever it was planned for
+docker compose run --rm chore-aisist done buy-caulk --by anna --date 2026-11-01
+docker compose run --rm chore-aisist skip trim-hedge-mendel
+docker compose run --rm chore-aisist status                           # what's planned, done, unknown, overdue
+```
+A skip doesn't reset the chore's clock: it stays due and comes back.
+
+## 5. Settings
 
 All in the deploy folder's `.env`. Changes apply the next time the planner runs.
 
@@ -163,3 +199,4 @@ All in the deploy folder's `.env`. Changes apply the next time the planner runs.
 | `CHORE_TIME_KEYWORDS` | `chore` | Timed titles that add that time (also matches "Chores") |
 | `NO_CHORES_KEYWORDS` | `no chores` | All-day titles that remove a day |
 | `TRAVEL_KEYWORDS` | `travel,trip,away` | All-day titles that mean away |
+| `REMINDER_MINUTES` | `30` | Phone reminder before each planned chore (0 = none) |

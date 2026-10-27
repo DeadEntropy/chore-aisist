@@ -7,7 +7,7 @@
 
 import json
 import os
-from datetime import date
+from datetime import date, datetime
 
 from pathlib import Path
 
@@ -153,3 +153,116 @@ def test_export_round_trip(conn, tmp_path):
     assert exported.keys() == original.keys()
     assert exported["screw-green-chairs"]["status"] == "done"
     assert exported["caulk-breakfast-room-window"]["needs"] == ["buy-caulk"]
+
+
+# --- phase 3: saved plan, Chores calendar, done/skip ------------------------------------
+
+class FakeChoresCalendar:
+    """Stands in for the Chores calendar: remembers what the planner wrote."""
+
+    def __init__(self, monkeypatch):
+        from planner import calendars
+        self.events = {}
+        monkeypatch.setattr(calendars, "chore_events", lambda cal, first, last: {
+            uid: e for uid, e in self.events.items()
+            if datetime.combine(first, datetime.min.time()) <= e.start < datetime.combine(last, datetime.min.time())})
+        monkeypatch.setattr(calendars, "write_chore_events", self.write)
+
+    def write(self, cal, put, delete):
+        for e in put:
+            self.events[e.uid] = e
+        for uid in delete:
+            self.events.pop(uid, None)
+
+
+def _cal():
+    from planner.config import CalendarSettings
+    return CalendarSettings(url="https://nc/dav", user="app", password="p", ca_cert=True,
+                            calendars=(("family", ("nicolas", "anna")),), buffer_minutes=30, keywords={},
+                            timezone="America/New_York")
+
+
+def _planning():
+    from planner.availability import parse_window, parse_windows
+    from planner.config import PlanningSettings
+    return PlanningSettings(parse_windows("sat 08:00-18:00; sun 08:00-18:00"), parse_window("08:00-18:00"))
+
+
+def test_plan_saves_and_mirrors_to_the_chores_calendar(conn, monkeypatch):
+    from planner import jobs
+    fake = FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    thursday = datetime(2026, 10, 29, 20)
+
+    first = jobs.run_plan(conn, _cal(), _planning(), thursday, [])
+    saved = db.planned_between(conn, datetime(2026, 10, 30), datetime(2026, 11, 6))
+    assert len(saved) == len(first.result.plan.items) == len(first.changes.add) > 0
+    assert set(fake.events) == {r.uid for r in saved}
+    assert all(e.title.startswith("🧹 ") for e in fake.events.values())
+
+    again = jobs.run_plan(conn, _cal(), _planning(), thursday, [])           # nothing changed → nothing to do
+    assert not again.changes and again.calendar_put == again.calendar_deleted == 0
+
+
+def test_done_skip_and_unknown(conn, monkeypatch):
+    from planner import jobs
+    fake = FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 29, 20), [])
+    sat = [r for r in db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 1))]
+    done, skipped, forgotten = sat[0], sat[1], sat[2]
+
+    rec = jobs.report(conn, _cal(), done.chore_id, "done", date(2026, 10, 31), None)
+    assert rec.uid == done.uid and fake.events[done.uid].title.startswith("✅ ")
+    assert db.last_done_dates(conn)[done.chore_id] == date(2026, 10, 31)
+    jobs.report(conn, _cal(), skipped.chore_id, "skip", date(2026, 10, 31), None)
+    assert fake.events[skipped.uid].title.startswith("⏭ ")
+
+    # Saturday 20:00 run plans from Sunday: Saturday's unreported items become unknown; history stays.
+    summary = jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 31, 20), [])
+    statuses = {r.uid: r.status for r in db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 1))}
+    assert statuses[done.uid] == "done" and statuses[skipped.uid] == "skipped" and statuses[forgotten.uid] == "unknown"
+    assert forgotten.uid in {r.uid for r in summary.unknown}
+    assert fake.events[forgotten.uid].title.startswith("❔ ")
+
+
+def test_report_unplanned_chore_needs_who(conn):
+    from planner import jobs
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    with pytest.raises(ValueError, match="--by"):
+        jobs.report(conn, None, "buy-caulk", "done", date(2026, 10, 31), None)      # 'either', not planned
+    assert jobs.report(conn, None, "buy-caulk", "done", date(2026, 10, 31), ["anna"]) is None
+    assert db.last_done_dates(conn)["buy-caulk"] == date(2026, 10, 31)
+    with pytest.raises(ValueError, match="Unknown person"):
+        jobs.report(conn, None, "buy-caulk", "done", date(2026, 10, 31), ["nicholas"])
+
+
+def test_reporting_sunday_morning_then_replanning_restores_sunday(conn, monkeypatch):
+    """Saturday's chores aren't reported by the Saturday 20:00 run; they're reported Sunday morning, which re-plans."""
+    from planner import jobs
+    FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 29, 20), [])
+    sunday = lambda: {r.chore_id for r in db.planned_between(conn, datetime(2026, 11, 1), datetime(2026, 11, 2))
+                      if r.status == "open"}
+    planned_sunday = sunday()
+    saturday = [r for r in db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 1))]
+
+    jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 31, 20), [])   # nothing reported yet
+    assert {r.chore_id for r in saturday} & sunday()                          # Saturday's ❔ chores moved to Sunday
+
+    for r in saturday:                                                        # Sunday 08:00: "I did all of it"
+        jobs.report(conn, _cal(), r.chore_id, "done", date(2026, 10, 31), None)
+    jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 11, 1, 8), [])
+    assert sunday() == planned_sunday                                         # Sunday is back to the original plan
+
+
+def test_done_by_someone_else_updates_the_event(conn, monkeypatch):
+    from planner import jobs
+    fake = FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 29, 20), [])
+    mine = next(r for r in db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 2))
+                if r.people == ["nicolas"])
+    jobs.report(conn, _cal(), mine.chore_id, "done", mine.start.date(), ["anna"])
+    assert fake.events[mine.uid].title.startswith("✅ ") and fake.events[mine.uid].title.endswith("(Anna)")

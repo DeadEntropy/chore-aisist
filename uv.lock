@@ -182,7 +182,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "caldav", specifier = ">=1.4" },
+    { name = "caldav", specifier = ">=3.6" },
     { name = "pymysql", specifier = ">=1.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
 ]

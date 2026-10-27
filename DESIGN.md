@@ -129,10 +129,12 @@ CREATE TABLE completion (
 CREATE TABLE planned (
   id          INT AUTO_INCREMENT PRIMARY KEY,
   chore_id    VARCHAR(64) NOT NULL REFERENCES chore(id),
-  person_id   VARCHAR(32) NOT NULL REFERENCES person(id),
-  plan_date   DATE NOT NULL,
-  caldav_uid  VARCHAR(255) NOT NULL UNIQUE,
-  status      VARCHAR(16) NOT NULL                      -- open | done | skipped | expired
+  people      VARCHAR(64) NOT NULL,                     -- 'nicolas' or 'nicolas,anna'
+  start_at    DATETIME NOT NULL,                        -- local time
+  end_at      DATETIME NOT NULL,
+  caldav_uid  VARCHAR(255) NOT NULL UNIQUE,             -- chore-{chore_id}-{date}@chore-aisist
+  status      VARCHAR(16) NOT NULL DEFAULT 'open',      -- open | done | skipped | unknown
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 CREATE TABLE run_log (
@@ -230,8 +232,8 @@ Calendar → person: Nicolas → Nicolas, Anna → Anna, Family and School → b
 Greedy fitting is good enough for a handful of chores per weekend; revisit only if results look wrong.
 
 Placement details: `either` goes to the person with the most free time left in the period; `both` needs a slot where
-both are free. Each chore goes in the first long-enough free slot on the day where that person (or pair) has the
-most free time left, which spreads work over the available days. Chores appear in the Chores calendar as
+both are free. Each chore goes in the **earliest** long-enough free slot: earliest-first keeps the daily
+re-plans stable (a new day appearing at the end of the 7-day window doesn't pull chores away from the next days). Chores appear in the Chores calendar as
 **timed events** (e.g. `Sat 09:00–10:30 🧹 Mow the lawn (Nicolas)`).
 
 `planner plan --dry-run [--date D] [--weeks N]` prints the plan without writing anything; with `--weeks N` it assumes
@@ -247,11 +249,16 @@ All access is as the app's Nextcloud user (`<app-user>`) with an app password (s
 - **Read** (phase 2, `calendars.py`): query the shared family calendars (Nicolas, Family, School, Anna) for events
   in the planning horizon (the planned weekends + 6 weeks of look-ahead), with recurring events expanded. Times are
   converted to local time (`PLANNER_TIMEZONE`). See §6.3 for what blocks whom.
-- **Write**: one VEVENT per planned chore in the Chores calendar, title `🧹 Mow the lawn (Nicolas)`,
-  with a deterministic UID: `chore-{chore_id}-{plan_date}@household-planner`.
-  Events only — no VTODOs.
-- **Single writer**: Nicolas and Anna have read-only access. Each run reconciles the Chores calendar against the
-  `planned` table, so the calendar is always exactly what the planner decided.
+- **Write** (phase 3, `plans.py` + `calendars.py`): one timed VEVENT per planned chore in the Chores calendar, title
+  `🧹 Mow the lawn (Nicolas)` (`✅` done, `⏭` skipped, `❔` unknown), a DISPLAY alarm `REMINDER_MINUTES` before
+  (30; 0 = none), and a deterministic UID `chore-{chore_id}-{date}@chore-aisist`. Events only — no VTODOs.
+- **Single writer, calendar mirrors the database**: the `planned` table is the source of truth; after each change the
+  planner makes its events in the Chores calendar (last 14 days → next 7) match it: create, update, delete. Only
+  events with a `@chore-aisist` UID are ever deleted. Nicolas and Anna have read-only access.
+- **Re-planning rules** (each run plans the 7 days from tomorrow): items before tomorrow are frozen; an open frozen
+  item whose time has passed becomes `unknown` and its chore goes back into the pool; one later today stays open and
+  isn't planned again; open items from tomorrow on are re-planned (kept, moved, removed, added); `done`/`skipped`
+  items are never changed. See `CALENDAR-GUIDE.md` §4.
 - **Clients**: any CalDAV calendar app (iOS Calendar, DAVx5 + any Android calendar, Nextcloud web UI) — view only.
 
 ## 7b. Reporting completions (Claude Code)
@@ -260,21 +267,23 @@ The feedback loop is conversational. On the home server, Nicolas or Anna tells C
 
 > "I mowed the lawn and weeded the pool deck this morning. Skipped the hedges."
 
-Claude Code maps that to planner CLI calls inside the running container:
+Claude Code maps that to planner commands (until the scheduler makes the container long-running, as one-off runs):
 
 ```bash
-docker exec chore-aisist planner done mow-lawn --date 2026-10-31
-docker exec chore-aisist planner done weed-pool-deck --date 2026-10-31
-docker exec chore-aisist planner skip trim-hedge-mendel
+docker compose run --rm chore-aisist done mow-lawn --date 2026-10-31
+docker compose run --rm chore-aisist done weed-pool-deck --date 2026-10-31
+docker compose run --rm chore-aisist skip trim-hedge-mendel
+docker compose run --rm chore-aisist status
 ```
 
 A `/chores` Claude Code command file on the home server (like the existing `/calendar` command) documents this
 vocabulary for Claude Code.
 
-- `done` inserts a `completion` row (`outcome = done`, `source = claude`), marks the `planned` row `done`, and
-  updates the calendar event (e.g. prefix `✅`).
-- `skip` records `outcome = skipped` (does not reset the interval) and marks the planned row `skipped`.
-- Planned chores never reported by the end of their weekend become `expired` and simply rescore next run.
+- `done` inserts a `completion` row per person (`outcome = done`, `source = claude`; people default to whoever the
+  item was planned for, `--by` overrides), marks the planned item closest to the date `done`, and updates its event
+  (`✅`). A chore that wasn't planned can still be reported done (with `--by` if its assignee is `either`).
+- `skip` records `outcome = skipped` (does not reset the interval) and marks the planned item `skipped` (`⏭`).
+- Planned chores whose time passed without a report become `unknown` (`❔`) at the next run and rescore.
 - Catalog edits go through the CLI too ("hedges take closer to 3 hours" → `planner chore set trim-hedge-mendel
   duration_h=3`; "add: clean the gutters every 6 months" → `planner chore add …`), then `planner plan` refreshes
   the current weekend.
@@ -285,8 +294,8 @@ vocabulary for Claude Code.
 
 | Schedule | Job |
 |---|---|
-| Thursday 20:00 | Weekly run: expire unreported items → score → fit → write events → send brief |
-| Daily 07:00 | Optional: send a short "today" note on weekends |
+| Every day 20:00 (phase 4) | `planner plan`: mark unreported past chores ❔ → re-plan from now to the end of the 7-day window → update the Chores calendar → send a brief |
+| After every `done` / `skip` | The same re-plan, from that moment |
 
 The schedule runs **inside** the app container (so `docker exec` always has a running container to talk to);
 no host cron.
@@ -328,15 +337,16 @@ no host cron.
 | Module | Does | Talks to |
 |---|---|---|
 | `config.py` | Settings from environment variables | — |
-| `models.py` | Data shapes: `Chore`, `Person`, `Completion`, `CalEvent`, `Busy`, `Scored`, `PlannedItem`, `Plan` | — |
+| `models.py` | Data shapes: `Chore`, `Person`, `Completion`, `CalEvent`, `Busy`, `Scored`, `PlannedItem`, `Plan`, `PlannedRecord` | — |
 | `db.py` | All SQL, including `migrate()` | MariaDB |
 | `seed.py` | Import / export `chores.json` | via `db.py` |
 | `cli.py` | The `planner` command | the above |
 | `scoring.py` | Which chores are due and how urgent (pure) | — |
 | `availability.py` | Free chore time per person and day: default windows + calendar extras − days off − busy time (pure) | — |
 | `fitting.py` | Who does what, when, in the free time (pure) | — |
-| `calendars.py` | Read busy time, sync the Chores calendar | Nextcloud |
-| `jobs.py` | `weekly_run()` and the long-running `serve()` | the above |
+| `calendars.py` | Read and classify the family calendars; read and write the planner's events in the Chores calendar | Nextcloud |
+| `plans.py` | The saved plan: freeze/unknown rules, reconcile, event UIDs/titles/iCalendar, calendar diff (pure) | — |
+| `jobs.py` | `run_plan` (re-plan from now, save, sync), `report` (done/skip), `dry_run`; later the scheduler | the above |
 | `weather.py`, `brief.py`, `notify.py` | Phases 4–5 | external APIs |
 
 Only `db.py` contains SQL and only `calendars.py` speaks CalDAV; `scoring.py` and `fitting.py` take plain data and
@@ -350,7 +360,9 @@ container. Revisit once the planner is live.
 
 ### Idempotency
 
-Re-running the weekly job replaces that weekend's planned items (same UIDs) rather than duplicating them.
+Every run is idempotent: with nothing changed (no new events, no reports, same time of day), a re-plan keeps the
+same items with the same UIDs and writes nothing to the calendar. Items are keyed by chore and day, so moving a chore
+within a day updates its event in place.
 
 ## 9. The weekly brief
 

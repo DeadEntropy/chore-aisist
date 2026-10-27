@@ -1,10 +1,9 @@
 """Who does what, on which day, at what time. Pure logic: no database, no network.
 
-Greedy: take chores from highest score down and give each one the first free slot that fits, on the day where
-that person (or both, for 'both' chores) has the most free time left. Free time comes from `availability`;
-there is no hours budget: any free time in the chore windows can be used. A chore waiting for another (e.g. a job
-and its purchase) is only placed after that one ends; chores that others wait for take the earliest slot instead,
-to leave room after them.
+Greedy: take chores from highest score down and give each one the earliest free slot that fits that person (or both,
+for 'both' chores). Earliest-first keeps re-plans stable: a daily run that adds a new day at the end of the window
+doesn't pull chores away from tomorrow. Free time comes from `availability`; there is no hours budget. A chore
+waiting for another (e.g. a job and its purchase) is only placed after that one ends.
 """
 
 from datetime import date, datetime, time, timedelta
@@ -18,7 +17,6 @@ def plan_period(scored: list[Scored], people: list[Person], days: list[date],
     free = {key: list(slots) for key, slots in free.items()}      # don't modify the caller's slots
     items: list[PlannedItem] = []
     placed_end: dict[str, datetime] = {}
-    waited_on = {n for s in scored for n in s.waits_for}
     unplanned = []
     for s in scored:
         duration = round(s.chore.duration_h * 60)
@@ -33,7 +31,7 @@ def plan_period(scored: list[Scored], people: list[Person], days: list[date],
 
         placed = None
         for group in groups:
-            slot = _best_slot(group, days, free, duration, not_before, first_free=s.chore.id in waited_on)
+            slot = _earliest_slot(group, days, free, duration, not_before)
             if slot:
                 placed = (group, *slot)
                 break
@@ -63,14 +61,9 @@ def _candidate_groups(assignee: str, people: list[Person], days: list[date],
     return [[assignee]] if assignee in ids else []
 
 
-def _best_slot(group, days, free, duration, not_before=None, first_free=False) -> tuple[date, int] | None:
-    """First slot long enough, on the day where the group has the most common free time
-    (or simply the earliest slot of the period, with `first_free`).
-
-    With `not_before`, the slot must start at or after that moment.
-    """
-    options = []
-    for i, day in enumerate(days):
+def _earliest_slot(group, days, free, duration, not_before=None) -> tuple[date, int] | None:
+    """The earliest slot long enough where everyone in the group is free (at or after `not_before`, if given)."""
+    for day in days:
         earliest = 0
         if not_before is not None:
             if day < not_before.date():
@@ -82,12 +75,8 @@ def _best_slot(group, days, free, duration, not_before=None, first_free=False) -
             common = intersect(common, free[(p, day)])
         fitting = [max(start, earliest) for start, end in common if end - max(start, earliest) >= duration]
         if fitting:
-            total_free = 0 if first_free else sum(end - start for start, end in common)
-            options.append((-total_free, i, day, fitting[0]))
-    if not options:
-        return None
-    _, _, day, start = min(options)
-    return day, start
+            return day, fitting[0]
+    return None
 
 
 def _minutes(t: time) -> int:
