@@ -14,7 +14,7 @@ from pathlib import Path
 from planner import backup, calendars, db, plans, scheduler
 from planner.availability import first_available_day, first_default_day, free_slots, subtract
 from planner.config import BackupSettings, CalendarSettings, PlanningSettings, Settings
-from planner.fitting import START_STEP_MINUTES, plan_period, round_up
+from planner.fitting import plan_period
 from planner.models import CalEvent, Chore, Completion, Person, Plan, PlannedRecord, RunRecord
 from planner.scoring import score_chores
 
@@ -138,7 +138,7 @@ def report(conn, cal, chore_id: str, outcome: str, day: date, by: list[str] | No
         if record:
             record.status = outcome
             if outcome == "done":
-                record.people = who                    # the event shows who actually did it
+                record.people = who                    # `planner status` shows who actually did it
             db.update_planned(conn, record)
         conn.commit()
         if cal is not None and record is not None:
@@ -305,8 +305,7 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
         days = [first + timedelta(days=i) for i in range(PERIOD_DAYS)]
         free = free_slots(person_ids, days, planning.windows, events, buffer_minutes, planning.extra_day_window)
         if not_before is not None and not_before.date() in days:
-            cutoff = round_up(not_before.hour * 60 + not_before.minute + (1 if not_before.second else 0),
-                              START_STEP_MINUTES)
+            cutoff = not_before.hour * 60 + not_before.minute + (1 if not_before.second else 0)   # fitting rounds up
             for p in person_ids:
                 free[(p, not_before.date())] = subtract(free[(p, not_before.date())], (0, cutoff))
         current = [r for r in in_progress if r.start.date() in days]
@@ -332,9 +331,6 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
         for r in current:
             last_done[r.chore_id] = r.start.date()
     return results
-
-
-
 
 
 def next_available(people: list[str], last_day: date, events: list[CalEvent], buffer_minutes: int,

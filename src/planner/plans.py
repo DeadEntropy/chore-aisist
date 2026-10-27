@@ -56,7 +56,7 @@ class Changes:
     add: list[PlannedRecord] = field(default_factory=list)
     move: list[PlannedRecord] = field(default_factory=list)      # same UID, new time or people
     remove: list[PlannedRecord] = field(default_factory=list)
-    dropped: list[PlannedItem] = field(default_factory=list)     # planned, but its UID is already history
+    dropped: list[PlannedItem] = field(default_factory=list)     # that chore already has a reported item that day
 
     def __bool__(self) -> bool:
         return bool(self.add or self.move or self.remove)
@@ -64,8 +64,13 @@ class Changes:
 
 def reconcile(records: list[PlannedRecord], items: list[PlannedItem], now: datetime) -> Changes:
     """How the saved plan from `now` on must change to match the new plan `items`. A saved item is the same item when
-    it's the same chore on the same day (it keeps its UID); otherwise a new UID is made."""
-    by_key = {(r.chore_id, r.start.date()): r for r in records}
+    it's the same chore on the same day (it keeps its UID); otherwise a new UID is made.
+
+    Past items that weren't reported (open, about to become ❔, or already ❔) are never matched: they stay where they
+    were, and a copy planned later the same day is a new item. A reported item (done/skipped) that day is matched,
+    so its chore isn't planned again that day."""
+    by_key = {(r.chore_id, r.start.date()): r for r in records
+              if r.start >= now or r.status in ("done", "skipped")}
     changes = Changes()
     wanted = set()
     for item in items:

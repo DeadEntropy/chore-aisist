@@ -476,3 +476,40 @@ def test_a_done_chore_leaves_the_calendar(conn, monkeypatch):
     jobs.report(conn, _cal(), first.chore_id, "done", date(2026, 10, 31), None)
     assert first.uid not in fake.events                                # gone from the calendar …
     assert first.chore_id in db.last_done_dates(conn)                  # … but recorded in the database
+
+
+def test_a_missed_morning_chore_turns_unknown_and_is_not_moved(conn, monkeypatch):
+    """Review of #11: a 07:00 run, then a 10:17 run with no reports, must leave the morning items where they were."""
+    from planner import jobs
+    fake = FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    conn.commit()
+    jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 31, 7, 0), [])
+    morning = [r for r in db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 1))
+               if r.end <= datetime(2026, 10, 31, 10, 17)]
+    assert morning
+    summary = jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 31, 10, 17), [])
+    after = {r.uid: r for r in db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 1))}
+    for r in morning:
+        assert (after[r.uid].start, after[r.uid].status) == (r.start, "unknown")   # same time, now ❔
+        assert fake.events[r.uid].title.startswith("❔ ")
+    assert len(summary.unknown) == len(morning)
+
+
+def test_reporting_a_missed_chore_picks_the_unknown_item_and_drops_the_copy(conn, monkeypatch):
+    from planner import jobs
+    FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    conn.commit()
+    jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 31, 7, 0), [])
+    missed = min(db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 1)), key=lambda r: r.start)
+    jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 31, 10, 17), [])
+    copies = [r for r in db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 1))
+              if r.chore_id == missed.chore_id and r.uid != missed.uid]
+    assert copies                                                          # re-planned later that day
+    record = jobs.report(conn, _cal(), missed.chore_id, "done", date(2026, 10, 31), ["nicolas"])
+    assert record.uid == missed.uid                                        # the ❔ item is the one reported
+    jobs.run_plan(conn, _cal(), _planning(), datetime(2026, 10, 31, 10, 20), [])
+    left = [r for r in db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 1))
+            if r.chore_id == missed.chore_id and r.status == "open"]
+    assert left == []                                                      # the same-day copy is gone

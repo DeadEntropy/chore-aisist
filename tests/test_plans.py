@@ -108,3 +108,13 @@ def test_reminder_change_rewrites_the_event():
     existing = {u: EventData(e.uid, e.title, e.start, e.end, 30) for u, e in desired.items()}
     put, delete = calendar_diff(desired, existing)
     assert [e.reminder for e in put] == [15] and delete == []
+
+
+def test_a_past_unreported_item_stays_and_a_same_day_copy_is_new():
+    records = [rec("weed", SAT, 8), rec("trim", SAT, 9, "unknown"), rec("hedge", SAT, 7, "skipped")]
+    now = datetime(2026, 10, 31, 10, 17)
+    ch = reconcile(records, [item("weed", SAT, 11), item("trim", SAT, 12), item("hedge", SAT, 13)], now)
+    assert sorted(r.chore_id for r in ch.add) == ["trim", "weed"]           # copies with their own UIDs
+    assert all(r.uid not in {uid("weed", SAT), uid("trim", SAT)} for r in ch.add)
+    assert ch.move == [] and ch.remove == []                                # the 08:00/09:00 items stay put
+    assert [i.chore.id for i in ch.dropped] == ["hedge"]                    # reported that day: not planned again
