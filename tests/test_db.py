@@ -20,7 +20,7 @@ from planner.models import Completion
 
 pytestmark = pytest.mark.skipif("TEST_DB_PASSWORD" not in os.environ, reason="no test database")
 
-SEED = Path(__file__).resolve().parents[1] / "chores.json"
+SEED = Path(__file__).resolve().parent / "fixtures" / "chores.json"
 SEED_FIRST_ID = json.loads(SEED.read_text())["chores"][0]["id"]
 
 

@@ -1,4 +1,5 @@
-"""Import chores.json into the database, and export the database back to the same format."""
+"""Import a JSON catalog into the database, and export the database back to the same format
+(see tests/fixtures/chores.json for the format)."""
 
 import json
 from datetime import date

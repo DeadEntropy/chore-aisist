@@ -22,6 +22,8 @@ is covered by the `/chores` Claude Code command in the homelab repo, not by this
   `jobs.py` wires them to the database and calendars; `cli.py` stays thin.
 - The `planned` table is the source of truth; the Chores calendar mirrors it. Only events whose UID ends in
   `@chore-aisist` may ever be deleted.
+- The database is the chore catalog. `tests/fixtures/chores.json` is sample data for the tests only: don't sync
+  it with the real catalog, and don't `import --update` it into the real database.
 - Schema changes are new files in `src/planner/migrations/NNN_*.sql` (never edit an applied one), applied by
   `planner migrate`.
 - Settings come from environment variables (`.env`, see `.env.example`); add new ones to `.env.example`,

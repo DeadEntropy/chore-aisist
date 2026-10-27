@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("migrate", help="create or upgrade the database tables")
     p.set_defaults(func=cmd_migrate)
 
-    p = sub.add_parser("import", help="load a seed file such as chores.json (adds missing chores)")
+    p = sub.add_parser("import", help="load chores from a JSON file (adds missing chores)")
     p.add_argument("path", type=Path)
     p.add_argument("--update", action="store_true", help="also update existing chores and people from the file")
     p.add_argument("--retire", action="store_true", help="retire (not delete) chores missing from the file")

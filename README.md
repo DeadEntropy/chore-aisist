@@ -15,7 +15,7 @@ src/planner/
   config.py     settings from environment variables
   models.py     data shapes (Chore, Person, Completion)
   db.py         all SQL, including migrations
-  seed.py       import / export chores.json
+  seed.py       import / export the catalog as JSON
   scoring.py    which chores are due, and how urgent
   availability.py  free chore time per person and day (default windows + calendar keywords)
   fitting.py    who does what, when, in the free time
@@ -25,8 +25,8 @@ src/planner/
   cli.py        the `planner` command
   migrations/   schema changes, applied in name order by `planner migrate`
 tests/          pytest; database tests need a throwaway MariaDB (see below)
+  fixtures/chores.json   sample catalog for the database tests (not the real one)
 deploy/         compose template + .env.example for the deployment folder
-chores.json     seed data, loaded once with `planner import`
 ```
 
 A later phase adds the scheduler (daily 20:00 run) and the weekly brief (see DESIGN.md §10).
@@ -70,7 +70,7 @@ then deletes it): `CALDAV_LIVE_TEST=1 .venv/bin/pytest tests/test_calendars_live
 
 ```
 planner migrate                          create / upgrade tables
-planner import chores.json [--update] [--retire]
+planner import <file.json> [--update] [--retire]
                                          load seed data: adds new chores; --update also applies
                                          changes to existing chores/people; --retire switches off
                                          chores missing from the file (history is kept)
@@ -103,8 +103,16 @@ docker build -t chore-aisist:0.1.0 .
 cd <deploy-dir>/chore-aisist
 docker compose up -d chore-aisist-db
 docker compose run --rm chore-aisist migrate
-docker compose run --rm chore-aisist import /app/chores.json
 ```
+
+The database is the catalog: add and edit chores with `planner chore add/set`. Nothing is imported at start-up and
+the image carries no chore list. To load chores in bulk (e.g. a fresh install), mount a JSON file in the same format
+as `tests/fixtures/chores.json`:
+```bash
+docker compose run --rm -v ./catalog.json:/tmp/catalog.json:ro chore-aisist import /tmp/catalog.json
+```
+`planner export` writes the catalog out as JSON for a readable snapshot; backups are database dumps (they also keep
+the completion history and the saved plan).
 
 | Container | Port | Notes |
 |---|---|---|

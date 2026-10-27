@@ -76,11 +76,14 @@ Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, read-only)
 
 ## 5. Data model
 
-Everything lives in the `chore-aisist-db` MariaDB database. `chores.json` in this repo is the **seed**: `planner
-import chores.json` adds new chores; `--update` also brings existing chores and people in line with the file, and
-`--retire` switches off (never deletes) chores no longer in it, so the file can keep being edited and re-synced.
-Edits made with `planner chore set` are overwritten by the next `--update` if the file disagrees.
-`planner export` writes the current catalog back out as JSON for a readable snapshot.
+Everything lives in the `chore-aisist-db` MariaDB database, and **the database is the catalog**: chores are
+added and edited with `planner chore add/set` (through Claude Code). The live catalog was loaded once from a JSON file;
+that file is no longer kept in step and now only serves as sample data for the tests (`tests/fixtures/chores.json`).
+
+`planner import <file>` still exists for bulk loads (e.g. a fresh install): it adds new chores; `--update` also brings
+existing chores and people in line with the file (overwriting edits made with `chore set`), and `--retire` switches
+off (never deletes) chores missing from it. `planner export` writes the catalog out as JSON for a readable snapshot.
+Backups are database dumps: they also keep the completion history and the saved plan.
 
 ```sql
 -- The chore catalog: what needs doing and how often.
@@ -310,7 +313,7 @@ no host cron.
 
 | Folder | Contents | In git |
 |---|---|---|
-| `<dev-dir>/chore-aisist` (this repo) | Code, tests, `Dockerfile`, migrations, `chores.json` seed, docs | `DeadEntropy/chore-aisist` |
+| `<dev-dir>/chore-aisist` (this repo) | Code, tests (with a sample catalog), `Dockerfile`, migrations, docs | `DeadEntropy/chore-aisist` |
 | `<deploy-dir>/chore-aisist/` | Deployment, same pattern as the other services: `docker-compose.yml`, `README.md`, `.env`, `.env.example`, `db/` (MariaDB data files) | smarthome repo (`.env` and `db/` gitignored) |
 
 ### Compose stack (`<deploy-dir>/chore-aisist/docker-compose.yml`)
@@ -345,7 +348,7 @@ no host cron.
 | `config.py` | Settings from environment variables | — |
 | `models.py` | Data shapes: `Chore`, `Person`, `Completion`, `CalEvent`, `Busy`, `Scored`, `PlannedItem`, `Plan`, `PlannedRecord` | — |
 | `db.py` | All SQL, including `migrate()` | MariaDB |
-| `seed.py` | Import / export `chores.json` | via `db.py` |
+| `seed.py` | Import / export the catalog as JSON | via `db.py` |
 | `cli.py` | The `planner` command | the above |
 | `scoring.py` | Which chores are due and how urgent (pure) | — |
 | `availability.py` | Free chore time per person and day: default windows + calendar extras − days off − busy time (pure) | — |
