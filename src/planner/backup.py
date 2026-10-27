@@ -2,8 +2,9 @@
 
 The scheduler makes one before each scheduled re-plan (unless one was already made since the last scheduled time),
 and `planner backup` makes one on demand (e.g. before `migrate`). Dumps run `mariadb-dump --single-transaction`,
-so they're consistent without locking the planner out. The password goes through a temporary option file, never the
-command line.
+so they're consistent without locking the planner out. The password goes through the MYSQL_PWD environment variable:
+never the command line, and nothing to escape (an option file would read a `#` in it as a comment). A dump that takes
+longer than DUMP_TIMEOUT is stopped, so a hung dump can't hang the scheduler.
 """
 
 import gzip
@@ -18,6 +19,7 @@ from pathlib import Path
 from planner.config import Settings
 
 NAME = re.compile(r"^chores-(\d{8})-(\d{4})\.sql\.gz$")
+DUMP_TIMEOUT = 600          # seconds; today's dump takes well under one
 
 
 def backup_name(now: datetime) -> str:
@@ -49,23 +51,24 @@ def dump(settings: Settings, folder: Path, now: datetime, keep_days: int) -> Pat
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / backup_name(now)
     partial = target.with_name(target.name + ".partial")
-    with tempfile.NamedTemporaryFile("w", suffix=".cnf", delete=False) as options:
-        os.chmod(options.name, 0o600)
-        options.write(f"[client]\nuser={settings.db_user}\npassword={settings.db_password}\n"
-                      f"host={settings.db_host}\nport={settings.db_port}\n")
+    command = ["mariadb-dump", f"--host={settings.db_host}", f"--port={settings.db_port}",
+               f"--user={settings.db_user}", "--single-transaction", "--skip-lock-tables", settings.db_name]
     try:
-        with gzip.open(partial, "wb") as out:
-            proc = subprocess.Popen(
-                ["mariadb-dump", f"--defaults-extra-file={options.name}", "--single-transaction",
-                 "--skip-lock-tables", settings.db_name],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            shutil.copyfileobj(proc.stdout, out)
-            error = proc.stderr.read().decode(errors="replace").strip()
-            if proc.wait() != 0:
+        with tempfile.TemporaryFile() as raw:
+            try:
+                # stdout to a file and stderr through communicate(): neither pipe can fill up and block the dump
+                proc = subprocess.run(command, stdout=raw, stderr=subprocess.PIPE, timeout=DUMP_TIMEOUT,
+                                      env={**os.environ, "MYSQL_PWD": settings.db_password})
+            except subprocess.TimeoutExpired:
+                raise ValueError(f"mariadb-dump took longer than {DUMP_TIMEOUT} s and was stopped") from None
+            if proc.returncode != 0:
+                error = proc.stderr.decode(errors="replace").strip()
                 raise ValueError(f"mariadb-dump failed: {error or f'exit code {proc.returncode}'}")
+            raw.seek(0)
+            with gzip.open(partial, "wb") as out:
+                shutil.copyfileobj(raw, out)
         partial.replace(target)                     # only complete dumps get the real name
     finally:
-        os.unlink(options.name)
         partial.unlink(missing_ok=True)
     for path in to_prune(backups(folder), keep_days, now.date()):
         path.unlink()

@@ -12,6 +12,7 @@ from planner.models import Chore, Completion, Person, PlannedRecord, RunRecord
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 DatabaseError = pymysql.err.MySQLError          # so other modules can catch database errors without pymysql
+DB_TIMEOUT_SECONDS = 300                        # per read/write; far longer than any query here (GET_LOCK waits 120)
 
 CHORE_COLUMNS = [
     "id", "name", "category", "type",
@@ -31,12 +32,18 @@ def connect(settings: Settings):
         database=settings.db_name,
         cursorclass=DictCursor,
         autocommit=False,
+        connect_timeout=10,
+        read_timeout=DB_TIMEOUT_SECONDS,       # a dead connection fails instead of blocking the scheduler forever
+        write_timeout=DB_TIMEOUT_SECONDS,
     )
     try:
         yield conn
         conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except pymysql.err.MySQLError:        # the connection dropped: raise the original error, not this one
+            pass
         raise
     finally:
         conn.close()
@@ -64,8 +71,11 @@ def plan_lock(conn, timeout_seconds: int | None = None):
         conn.commit()
         yield
     finally:
-        with conn.cursor() as cur:
-            cur.execute("SELECT RELEASE_LOCK(%s)", (PLAN_LOCK,))
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT RELEASE_LOCK(%s)", (PLAN_LOCK,))
+        except pymysql.err.MySQLError:        # connection gone: the server drops its locks anyway; keep the real error
+            pass
 
 
 # --- migrations -------------------------------------------------------------

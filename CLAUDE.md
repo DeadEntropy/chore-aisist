@@ -81,6 +81,7 @@ The running stack lives in the deployment folder (`<deploy-dir>/chore-aisist`, t
 docker build --build-arg APP_UID=$(id -u) -t chore-aisist:0.1.0 .   # from this repo, on master after the merge
 cd <deploy-dir>/chore-aisist
 docker compose exec chore-aisist planner backup           # before a migration
+docker compose stop chore-aisist                          # no scheduled run between migrate and the new image
 docker compose run --rm chore-aisist migrate              # if there's a new migration
 docker compose up -d                                      # recreate the scheduler container on the new image
 docker compose exec chore-aisist planner plan --dry-run   # check

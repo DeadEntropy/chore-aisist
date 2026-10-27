@@ -315,7 +315,7 @@ def test_real_runs_are_logged_even_when_they_fail(conn, monkeypatch):
     with pytest.raises(ValueError):
         jobs.plan_now(conn, _cal(), _planning(), "schedule")
     last = db.last_run(conn)
-    assert (last.trigger, last.outcome, last.message) == ("schedule", "error", "Couldn't read the calendars")
+    assert (last.trigger, last.outcome, last.message) == ("schedule", "error", "ValueError: Couldn't read the calendars")
 
 
 def test_health(conn):
@@ -323,10 +323,13 @@ def test_health(conn):
     from planner.models import RunRecord
     now = datetime.now()
     problems, _ = jobs.health(conn, now, None)
-    assert problems == ["no successful run in the last 26 hours"]
+    assert problems == ["no successful scheduled run in the last 26 hours"]
+    db.log_run(conn, RunRecord(now - timedelta(hours=1), now, "report", "ok", "ok"))
+    problems, _ = jobs.health(conn, now, None)
+    assert problems == ["no successful scheduled run in the last 26 hours"]     # a report's re-plan doesn't count
     db.log_run(conn, RunRecord(now - timedelta(hours=1), now, "schedule", "ok", "ok"))
     problems, summary = jobs.health(conn, now, None)
-    assert problems == [] and summary.startswith("last successful run")
+    assert problems == [] and summary.startswith("last scheduled run")
 
 
 def test_scheduled_check_runs_when_due_and_backs_up_first(conn, settings, monkeypatch, tmp_path):
@@ -423,3 +426,22 @@ def test_health_also_needs_a_recent_backup(conn, tmp_path):
     (tmp_path / backup_name(now - timedelta(hours=2))).write_bytes(b"")
     problems, summary = jobs.health(conn, now, backups)
     assert problems == [] and "last backup" in summary
+
+
+def test_a_dropped_connection_logs_the_real_error(conn, settings, monkeypatch, capsys):
+    from pymysql.cursors import DictCursor
+
+    from planner import jobs
+    victim = pymysql.connect(host=settings.db_host, port=settings.db_port, user=settings.db_user,
+                             password=settings.db_password, database=settings.db_name, cursorclass=DictCursor)
+
+    def lose_connection(c, cal, planning):
+        with conn.cursor() as cur:
+            cur.execute(f"KILL {victim.thread_id()}")
+        with victim.cursor() as cur:
+            cur.execute("SELECT 1")                             # fails: the connection is gone
+    monkeypatch.setattr(jobs, "_plan_now", lose_connection)
+    with pytest.raises(db.DatabaseError) as raised:
+        jobs.plan_now(victim, _cal(), _planning(), "schedule")
+    assert raised.value.args[0] in (2006, 2013)                 # the real error, not one from the rollback
+    assert "couldn't write the run log" in capsys.readouterr().err

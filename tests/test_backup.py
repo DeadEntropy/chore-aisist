@@ -8,7 +8,7 @@ import pytest
 from planner import backup
 from planner.config import Settings
 
-SETTINGS = Settings("db", 3306, "chores", "chore_aisist", "s3cret")
+SETTINGS = Settings("db", 3306, "chores", "chore_aisist", "s3c#ret\"x")     # a # and a " must survive
 
 
 def touch(folder, name):
@@ -34,13 +34,14 @@ def test_prune_keeps_recent_ones_and_always_the_newest(tmp_path):
 
 @pytest.fixture
 def fake_dump(tmp_path, monkeypatch):
-    """A stand-in mariadb-dump on PATH that records its arguments and option file."""
+    """A stand-in mariadb-dump on PATH that records its arguments and the password it was given."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     script = bindir / "mariadb-dump"
     script.write_text('#!/bin/sh\n'
                       'echo "$@" > "$FAKE_DIR/args"\n'
-                      'cat "${1#--defaults-extra-file=}" > "$FAKE_DIR/options"\n'
+                      'printf "%s" "$MYSQL_PWD" > "$FAKE_DIR/password"\n'
+                      'if [ -n "$FAKE_HANG" ]; then sleep 5; fi\n'
                       'if [ -n "$FAKE_FAIL" ]; then echo "Access denied" >&2; exit 2; fi\n'
                       'echo "CREATE TABLE chore (id INT);"\n')
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
@@ -56,15 +57,24 @@ def test_dump_writes_a_gzipped_file_without_the_password_on_the_command_line(fak
     assert path.name == "chores-20261027-2000.sql.gz"
     assert gzip.decompress(path.read_bytes()) == b"CREATE TABLE chore (id INT);\n"
     args = (fake_dump / "args").read_text()
-    assert "s3cret" not in args and "--single-transaction" in args and args.strip().endswith("chores")
-    assert "password=s3cret" in (fake_dump / "options").read_text()
+    assert "s3c" not in args and "--single-transaction" in args and args.strip().endswith("chores")
+    assert "--user=chore_aisist" in args and "--host=db" in args
+    assert (fake_dump / "password").read_text() == SETTINGS.db_password  # the whole password, # and " included
     assert not old.exists()                                           # pruned: older than 30 days
-    assert not any(p.suffix == ".cnf" for p in fake_dump.glob("**/*.cnf"))
 
 
 def test_a_failed_dump_leaves_no_file(fake_dump, monkeypatch):
     monkeypatch.setenv("FAKE_FAIL", "1")
     out = fake_dump / "backups"
     with pytest.raises(ValueError, match="Access denied"):
+        backup.dump(SETTINGS, out, datetime(2026, 10, 27, 20, 0), keep_days=30)
+    assert list(out.iterdir()) == []
+
+
+def test_a_hung_dump_is_stopped(fake_dump, monkeypatch):
+    monkeypatch.setenv("FAKE_HANG", "1")
+    monkeypatch.setattr(backup, "DUMP_TIMEOUT", 0.5)
+    out = fake_dump / "backups"
+    with pytest.raises(ValueError, match="took longer than"):
         backup.dump(SETTINGS, out, datetime(2026, 10, 27, 20, 0), keep_days=30)
     assert list(out.iterdir()) == []

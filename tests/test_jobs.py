@@ -130,3 +130,18 @@ def test_backup_before_run_once_per_scheduled_time_and_never_fatal(tmp_path, mon
     monkeypatch.setattr(jobs.backup, "dump", broken)
     jobs.backup_before_run(None, backups, datetime(2026, 10, 28, 20, 0), times, log)  # logged, not raised
     assert ("Backup failed: ValueError: disk full", True) in lines
+
+
+def test_an_unreadable_backup_folder_doesnt_stop_the_run(tmp_path, monkeypatch):
+    from datetime import time
+
+    from planner import jobs
+    from planner.config import BackupSettings
+    lines = []
+
+    def unreadable(folder):
+        raise PermissionError(13, "Permission denied", str(folder))
+    monkeypatch.setattr(jobs.backup, "latest", unreadable)
+    jobs.backup_before_run(None, BackupSettings(str(tmp_path), 30), datetime(2026, 10, 27, 20, 0), (time(20, 0),),
+                           lambda message, error=False: lines.append((message, error)))
+    assert lines and lines[0][1] and "Backup failed: PermissionError" in lines[0][0]

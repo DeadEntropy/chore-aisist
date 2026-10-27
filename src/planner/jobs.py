@@ -185,8 +185,11 @@ def plan_now(conn, cal: CalendarSettings | None, planning: PlanningSettings, tri
     try:
         summary = _plan_now(conn, cal, planning)
     except Exception as exc:
-        conn.rollback()
-        _log_run(conn, RunRecord(started, datetime.now(), trigger, "error", str(exc)))
+        try:
+            conn.rollback()
+        except db.DatabaseError:               # e.g. the connection dropped: keep the original error, not this one
+            pass
+        _log_run(conn, RunRecord(started, datetime.now(), trigger, "error", f"{type(exc).__name__}: {exc}"))
         raise
     _log_run(conn, RunRecord(started, datetime.now(), trigger, "ok", describe(summary)))
     return summary
@@ -245,28 +248,29 @@ def backup_before_run(settings: Settings, backups: BackupSettings, now: datetime
     """Back up before a scheduled run, unless a backup was already made since the last scheduled time (a retried
     run doesn't back up again). A failed backup is logged; the re-plan still runs (it never deletes chores or history)."""
     folder = Path(backups.folder)
-    made = backup.latest(folder)
-    if made is not None and made >= scheduler.latest_scheduled(now, times).replace(second=0):
-        return
-    try:
+    try:                                       # anything here, even listing the folder, must not stop the re-plan
+        made = backup.latest(folder)
+        if made is not None and made >= scheduler.latest_scheduled(now, times).replace(second=0):
+            return
         log(f"Backed up to {backup.dump(settings, folder, now, backups.keep_days)}")
     except Exception as exc:
         log(f"Backup failed: {type(exc).__name__}: {exc}", error=True)
 
 
 def health(conn, now: datetime, backups: BackupSettings | None) -> tuple[list[str], str]:
-    """(problems, summary) for `planner health`: unhealthy without a successful run, or (when backups are on) a
-    backup, in the last 26 hours."""
+    """(problems, summary) for `planner health`: unhealthy without a successful *scheduled* run, or (when backups
+    are on) a backup, in the last 26 hours. Only scheduled runs count, so a hung scheduler isn't hidden by the
+    re-plans that `done`/`skip` make."""
     problems = []
-    last = db.last_run(conn, outcome="ok")
+    last = db.last_run(conn, trigger="schedule", outcome="ok")
     if not scheduler.is_healthy(now, last.started_at if last else None):
-        failed = db.last_run(conn)
-        problems.append("no successful run in the last 26 hours"
+        failed = db.last_run(conn, trigger="schedule")
+        problems.append("no successful scheduled run in the last 26 hours"
                         + (f" (last attempt {failed.started_at:%a %d %b %H:%M}: {failed.message})" if failed else ""))
     made = backup.latest(Path(backups.folder)) if backups else None
     if backups and not scheduler.is_healthy(now, made):
         problems.append(f"no backup in {backups.folder} in the last 26 hours")
-    summary = (f"last successful run {last.started_at:%a %d %b %H:%M} ({last.trigger})" if last else "no run yet") \
+    summary = (f"last scheduled run {last.started_at:%a %d %b %H:%M}" if last else "no scheduled run yet") \
         + (f", last backup {made:%a %d %b %H:%M}" if made else "")
     return problems, summary
 

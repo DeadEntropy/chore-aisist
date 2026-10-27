@@ -41,7 +41,7 @@ The Household Planner is a self-hosted assistant that:
 │  ┌──────────────────────┐  SQL   ┌────────────────────────────────────────┐  │
 │  │ chore-aisist-db      │◄──────►│ chore-aisist (app container, Python)   │  │
 │  │ MariaDB              │        │ - CLI: done / skip / plan / chore …    │  │
-│  │ - chores             │        │ - scheduler (weekly run)               │  │
+│  │ - chores             │        │ - scheduler (daily 20:00 re-plan)      │  │
 │  │ - completion history │        │ - scoring + fitting                    │  │
 │  │ - plans, run log     │        └───────┬───────────────────┬────────────┘  │
 │  └──────────────────────┘                │ CalDAV as         │               │
@@ -64,7 +64,7 @@ Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, read-only)
 
 | Component | Role |
 |---|---|
-| **`chore-aisist` (app)** | Python, one long-running container. Runs the weekly job on an internal schedule and exposes a CLI (`planner …`) that Claude Code calls with `docker exec`. Holds no data of its own. |
+| **`chore-aisist` (app)** | Python, one long-running container. Re-plans every day at 20:00 on an internal schedule (backing up first) and exposes a CLI (`planner …`) that Claude Code calls with `docker exec`. Holds no data of its own. |
 | **`chore-aisist-db` (MariaDB)** | Dedicated database container: the chore catalog, completion history, plans and run log. Data files on the NAS share (backed up). Separate from Nextcloud's database so each can be upgraded/restored independently. |
 | **App Nextcloud user (`<app-user>`)** | The app's identity. Owns the Chores calendar; read-only access to the family calendars. Details in `CALENDAR.md`. |
 | **Nextcloud calendars (read)** | Nicolas, Family, School, Anna: kids' events, gym, travel → blocked time. |
@@ -279,13 +279,13 @@ The feedback loop is conversational. On the home server, Nicolas or Anna tells C
 
 > "I mowed the lawn and weeded the pool deck this morning. Skipped the hedges."
 
-Claude Code maps that to planner commands (until the scheduler makes the container long-running, as one-off runs):
+Claude Code maps that to planner commands, run in the always-on app container:
 
 ```bash
-docker compose run --rm chore-aisist done mow-lawn --date 2026-10-31
-docker compose run --rm chore-aisist done weed-pool-deck --date 2026-10-31
-docker compose run --rm chore-aisist skip trim-hedge-mendel
-docker compose run --rm chore-aisist status
+docker compose exec chore-aisist planner done mow-lawn --date 2026-10-31
+docker compose exec chore-aisist planner done weed-pool-deck --date 2026-10-31
+docker compose exec chore-aisist planner skip trim-hedge-mendel
+docker compose exec chore-aisist planner status
 ```
 
 A `/chores` Claude Code command file on the home server (like the existing `/calendar` command) documents this
@@ -306,7 +306,7 @@ vocabulary for Claude Code.
 
 | Schedule | Job |
 |---|---|
-| Every day 20:00 (phase 4) | `planner plan`: mark unreported past chores ❔ → re-plan from now to the end of the 7-day window → update the Chores calendar → send a brief |
+| Every day 20:00 (phase 4a, `PLAN_TIMES`) | Back up the database → mark unreported past chores ❔ → re-plan from now to the end of the 7-day window → update the Chores calendar (sending a brief is phase 4b) |
 | After every `done` / `skip` | The same re-plan, from that moment |
 
 The schedule runs **inside** the app container (so `docker exec` always has a running container to talk to);

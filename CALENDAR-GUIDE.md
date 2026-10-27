@@ -203,3 +203,5 @@ container keeps the settings it started with until it's recreated.
 | `TRAVEL_KEYWORDS` | `travel,trip,away` | All-day titles that mean away |
 | `REMINDER_MINUTES` | `30` | Phone reminder before each planned chore (0 = none) |
 | `PLAN_TIMES` | `20:00` | When the planner re-plans every day on its own; add a morning run with e.g. `07:00,20:00` |
+| `BACKUP_FOLDER` | `./backups` | Host folder for the database dumps made before every scheduled run; on another disk than `./db`, writable by the image's user (`APP_UID`) |
+| `BACKUP_KEEP_DAYS` | `30` | Days of dumps to keep (the newest is never deleted) |

@@ -112,6 +112,7 @@ cd <deploy-dir>/chore-aisist
 docker compose up -d chore-aisist-db
 docker compose run --rm chore-aisist migrate
 docker compose run --rm -v ./catalog.json:/tmp/catalog.json:ro chore-aisist import /tmp/catalog.json   # fresh database only
+mkdir -p <backup-folder> && chown $(id -u) <backup-folder>   # BACKUP_FOLDER in .env; else Docker creates it root-owned
 docker compose up -d                                     # starts the scheduler
 docker compose exec chore-aisist planner status          # any other command, in the running container
 ```
