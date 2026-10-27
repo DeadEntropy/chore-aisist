@@ -2,7 +2,10 @@
 # Copy this folder there, fill in .env, then:
 #   docker compose up -d chore-aisist-db
 #   docker compose run --rm chore-aisist migrate
+#   # fresh database only: load people and chores first (the scheduler's runs need them), see README.md
+#   docker compose run --rm -v ./catalog.json:/tmp/catalog.json:ro chore-aisist import /tmp/catalog.json
 #   docker compose up -d                  # starts the scheduler (re-plans every day at PLAN_TIMES)
+# After editing .env, run `docker compose up -d` again: the running container keeps the settings it started with.
 
 services:
   chore-aisist-db:

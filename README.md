@@ -15,7 +15,7 @@ src/planner/
   config.py     settings from environment variables
   models.py     data shapes (Chore, Person, Completion)
   db.py         all SQL, including migrations
-  seed.py       import / export chores.json
+  seed.py       import / export the catalog as JSON
   scoring.py    which chores are due, and how urgent
   availability.py  free chore time per person and day (default windows + calendar keywords)
   fitting.py    who does what, when, in the free time
@@ -26,8 +26,8 @@ src/planner/
   cli.py        the `planner` command
   migrations/   schema changes, applied in name order by `planner migrate`
 tests/          pytest; database tests need a throwaway MariaDB (see below)
+  fixtures/chores.json   sample catalog for the database tests (not the real one)
 deploy/         compose template + .env.example for the deployment folder
-chores.json     seed data, loaded once with `planner import`
 ```
 
 The app container runs `planner serve`: it re-plans every day at 20:00 (`PLAN_TIMES`). A weekly brief comes later
@@ -72,7 +72,7 @@ then deletes it): `CALDAV_LIVE_TEST=1 .venv/bin/pytest tests/test_calendars_live
 
 ```
 planner migrate                          create / upgrade tables
-planner import chores.json [--update] [--retire]
+planner import <file.json> [--update] [--retire]
                                          load seed data: adds new chores; --update also applies
                                          changes to existing chores/people; --retire switches off
                                          chores missing from the file (history is kept)
@@ -106,10 +106,17 @@ docker build -t chore-aisist:0.1.0 .
 cd <deploy-dir>/chore-aisist
 docker compose up -d chore-aisist-db
 docker compose run --rm chore-aisist migrate
-docker compose run --rm chore-aisist import /app/chores.json
+docker compose run --rm -v ./catalog.json:/tmp/catalog.json:ro chore-aisist import /tmp/catalog.json   # fresh database only
 docker compose up -d                                     # starts the scheduler
 docker compose exec chore-aisist planner status          # any other command, in the running container
 ```
+
+The database is the catalog: add and edit chores with `planner chore add/set`. The image carries no chore list, so a
+**fresh** database must get its people and chores from a JSON file (same format as `tests/fixtures/chores.json`)
+before the scheduler starts: its runs need the people named in `BUSY_CALENDARS`. After changing `.env`, run
+`docker compose up -d` so the running container picks up the new settings.
+`planner export` writes the catalog out as JSON for a readable snapshot; backups are database dumps (they also keep
+the completion history and the saved plan).
 
 | Container | Port | Notes |
 |---|---|---|

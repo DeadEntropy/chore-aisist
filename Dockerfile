@@ -16,13 +16,12 @@ RUN uv sync --frozen --no-dev --no-install-project --no-build
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable --no-build
 
-# --- runtime stage: just Python, the environment and the seed file ------------
+# --- runtime stage: just Python and the environment ---------------------------
 FROM python:3.12-slim
 
 RUN useradd --system --no-create-home app
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
-COPY chores.json ./
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
