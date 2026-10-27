@@ -3,6 +3,7 @@
 Household chore planner: knows the house and garden chores, reads the family calendars, and plans what to do
 each weekend into a dedicated Nextcloud "Chores" calendar. Completions are reported through Claude Code.
 
+- [CLAUDE.md](CLAUDE.md) — guide for AI coding agents (and humans): architecture rules, tests, workflow
 - [DESIGN.md](DESIGN.md) — goals, architecture, data model, planning algorithm, build plan
 - [CALENDAR-GUIDE.md](CALENDAR-GUIDE.md) — **how to use your calendar with the planner**: adding/removing chore time, travel, connecting another calendar
 - [CALENDAR.md](CALENDAR.md) — Nextcloud calendars, the app user, CalDAV access
