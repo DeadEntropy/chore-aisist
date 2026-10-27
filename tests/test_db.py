@@ -7,7 +7,7 @@
 
 import json
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from pathlib import Path
 
@@ -20,16 +20,19 @@ from planner.models import Completion
 
 pytestmark = pytest.mark.skipif("TEST_DB_PASSWORD" not in os.environ, reason="no test database")
 
-SEED = Path(__file__).resolve().parents[1] / "chores.json"
+SEED = Path(__file__).resolve().parent / "fixtures" / "chores.json"
 SEED_FIRST_ID = json.loads(SEED.read_text())["chores"][0]["id"]
 
 
 @pytest.fixture
 def settings():
+    name = os.environ.get("TEST_DB_NAME", "chores_test")
+    if not name.endswith("_test"):              # these tests drop every table: never point them at real data
+        pytest.exit(f"TEST_DB_NAME must end in _test (got '{name}'): the database tests drop every table", 2)
     return Settings(
         db_host=os.environ.get("TEST_DB_HOST", "127.0.0.1"),
         db_port=int(os.environ.get("TEST_DB_PORT", "3308")),
-        db_name=os.environ.get("TEST_DB_NAME", "chores_test"),
+        db_name=name,
         db_user=os.environ.get("TEST_DB_USER", "root"),
         db_password=os.environ["TEST_DB_PASSWORD"],
     )
@@ -39,6 +42,8 @@ def settings():
 def conn(settings):
     with db.connect(settings) as c:
         with c.cursor() as cur:
+            cur.execute("SELECT DATABASE() AS name")
+            assert cur.fetchone()["name"].endswith("_test"), "refusing to drop tables outside a *_test database"
             cur.execute("SET FOREIGN_KEY_CHECKS = 0")
             cur.execute("SHOW TABLES")
             for row in cur.fetchall():
@@ -280,3 +285,163 @@ def test_done_by_someone_else_updates_the_event(conn, monkeypatch):
                 if r.people == ["nicolas"])
     jobs.report(conn, _cal(), mine.chore_id, "done", mine.start.date(), ["anna"])
     assert fake.events[mine.uid].title.startswith("✅ ") and fake.events[mine.uid].title.endswith("(Anna)")
+
+
+# --- phase 4a: run log, scheduler, health -----------------------------------------------
+
+def test_run_log_round_trip(conn):
+    from planner.models import RunRecord
+    assert db.last_run(conn) is None
+    db.log_run(conn, RunRecord(datetime(2026, 10, 26, 20, 0), datetime(2026, 10, 26, 20, 0, 4), "schedule", "ok",
+                               "1 added"))
+    db.log_run(conn, RunRecord(datetime(2026, 10, 27, 9, 0), datetime(2026, 10, 27, 9, 0, 2), "report", "error",
+                               "calendar down"))
+    assert db.last_run(conn).trigger == "report"
+    assert db.last_run(conn, trigger="schedule", outcome="ok").message == "1 added"
+    assert db.last_run(conn, outcome="error").message == "calendar down"
+    assert db.last_run(conn, trigger="manual") is None
+
+
+def test_real_runs_are_logged_even_when_they_fail(conn, monkeypatch):
+    from planner import jobs
+    monkeypatch.setattr(jobs, "_plan_now", lambda c, cal, planning: "summary")
+    monkeypatch.setattr(jobs, "describe", lambda summary: "2 added")
+    assert jobs.plan_now(conn, _cal(), _planning(), "manual") == "summary"
+    assert (db.last_run(conn).outcome, db.last_run(conn).message) == ("ok", "2 added")
+
+    def boom(c, cal, planning):
+        raise ValueError("Couldn't read the calendars")
+    monkeypatch.setattr(jobs, "_plan_now", boom)
+    with pytest.raises(ValueError):
+        jobs.plan_now(conn, _cal(), _planning(), "schedule")
+    last = db.last_run(conn)
+    assert (last.trigger, last.outcome, last.message) == ("schedule", "error", "ValueError: Couldn't read the calendars")
+
+
+def test_health(conn):
+    from planner import jobs
+    from planner.models import RunRecord
+    now = datetime.now()
+    problems, _ = jobs.health(conn, now, None)
+    assert problems == ["no successful scheduled run in the last 26 hours"]
+    db.log_run(conn, RunRecord(now - timedelta(hours=1), now, "report", "ok", "ok"))
+    problems, _ = jobs.health(conn, now, None)
+    assert problems == ["no successful scheduled run in the last 26 hours"]     # a report's re-plan doesn't count
+    db.log_run(conn, RunRecord(now - timedelta(hours=1), now, "schedule", "ok", "ok"))
+    problems, summary = jobs.health(conn, now, None)
+    assert problems == [] and summary.startswith("last scheduled run")
+
+
+def test_scheduled_check_runs_when_due_and_backs_up_first(conn, settings, monkeypatch, tmp_path):
+    from planner import jobs
+    from planner.config import BackupSettings
+    seed.import_json(conn, SEED)
+    conn.commit()
+    steps = []
+    monkeypatch.setattr(jobs.backup, "dump", lambda s, folder, now, keep: steps.append("backup") or folder / "x")
+    monkeypatch.setattr(jobs, "_plan_now", lambda c, cal, planning: steps.append("plan") or "summary")
+    monkeypatch.setattr(jobs, "describe", lambda summary: "done")
+    times = (datetime.now().time().replace(microsecond=0),)
+    lines = []
+
+    def check():
+        jobs.scheduled_check(settings, _cal(), _planning(), times, BackupSettings(str(tmp_path), 30),
+                             lambda message, error=False: lines.append(message))
+
+    check()
+    assert steps == ["backup", "plan"]                   # due: back up, then re-plan
+    assert db.last_run(conn, trigger="schedule", outcome="ok") is not None
+    check()
+    assert steps == ["backup", "plan"]                   # not due again until the same time tomorrow
+    assert "Re-planned: done" in lines
+
+
+def test_plan_lock_is_exclusive_across_connections(conn, settings):
+    with db.connect(settings) as other:
+        with db.plan_lock(conn):
+            with pytest.raises(ValueError, match="still busy"):
+                with db.plan_lock(other, timeout_seconds=0):
+                    pass
+        with db.plan_lock(other, timeout_seconds=0):          # free again once released
+            pass
+
+
+def test_plan_lock_reads_what_the_previous_holder_committed(conn, settings):
+    seed.import_json(conn, SEED)
+    conn.commit()
+    with db.connect(settings) as other:
+        assert db.get_chore(other, "paint-wall").duration_h == 2      # `other` now reads from a snapshot
+        db.update_chore(conn, "paint-wall", {"duration_h": 5})
+        conn.commit()
+        assert db.get_chore(other, "paint-wall").duration_h == 2      # same snapshot: the change isn't visible
+        with db.plan_lock(other):
+            assert db.get_chore(other, "paint-wall").duration_h == 5  # the lock starts a fresh transaction
+
+
+def test_a_report_waits_for_a_running_plan(conn, settings, monkeypatch):
+    from planner import jobs
+    FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    conn.commit()
+    with db.connect(settings) as scheduler:
+        with db.plan_lock(scheduler):                                  # a plan run in progress elsewhere
+            monkeypatch.setattr(db, "PLAN_LOCK_TIMEOUT", 0)
+            with pytest.raises(ValueError, match="still busy"):
+                jobs.report(conn, _cal(), "paint-wall", "done", date(2026, 10, 31), ["nicolas"])
+    assert "paint-wall" not in db.last_done_dates(conn)                # nothing was recorded
+
+
+# --- safety: empty database, backups in health ------------------------------------------
+
+def test_planning_refuses_an_empty_database(conn):
+    from planner import jobs
+    with pytest.raises(ValueError, match="no people and no chores"):
+        jobs.check_catalog(conn)
+    with pytest.raises(ValueError, match="right data folder"):
+        jobs.plan_now(conn, _cal(), _planning(), "manual")
+    seed.import_json(conn, SEED)
+    jobs.check_catalog(conn)                                           # fine once it has a catalog
+
+
+def test_serve_refuses_to_start_on_an_empty_database(conn, settings, monkeypatch):
+    from planner import daemon
+    monkeypatch.setattr(daemon, "load_plan_times", lambda: (datetime.now().time(),))
+    monkeypatch.setattr(daemon, "load_planning_settings", _planning)
+    monkeypatch.setattr(daemon, "load_calendar_settings", _cal)
+    monkeypatch.setattr(daemon, "load_backup_settings", lambda: None)
+    with pytest.raises(ValueError, match="no people and no chores"):
+        daemon.serve(settings)
+
+
+def test_health_also_needs_a_recent_backup(conn, tmp_path):
+    from planner import jobs
+    from planner.backup import backup_name
+    from planner.config import BackupSettings
+    from planner.models import RunRecord
+    now = datetime.now()
+    db.log_run(conn, RunRecord(now - timedelta(hours=1), now, "schedule", "ok", "ok"))
+    backups = BackupSettings(str(tmp_path), 30)
+    problems, _ = jobs.health(conn, now, backups)
+    assert problems == [f"no backup in {tmp_path} in the last 26 hours"]
+    (tmp_path / backup_name(now - timedelta(hours=2))).write_bytes(b"")
+    problems, summary = jobs.health(conn, now, backups)
+    assert problems == [] and "last backup" in summary
+
+
+def test_a_dropped_connection_logs_the_real_error(conn, settings, monkeypatch, capsys):
+    from pymysql.cursors import DictCursor
+
+    from planner import jobs
+    victim = pymysql.connect(host=settings.db_host, port=settings.db_port, user=settings.db_user,
+                             password=settings.db_password, database=settings.db_name, cursorclass=DictCursor)
+
+    def lose_connection(c, cal, planning):
+        with conn.cursor() as cur:
+            cur.execute(f"KILL {victim.thread_id()}")
+        with victim.cursor() as cur:
+            cur.execute("SELECT 1")                             # fails: the connection is gone
+    monkeypatch.setattr(jobs, "_plan_now", lose_connection)
+    with pytest.raises(db.DatabaseError) as raised:
+        jobs.plan_now(victim, _cal(), _planning(), "schedule")
+    assert raised.value.args[0] in (2006, 2013)                 # the real error, not one from the rollback
+    assert "couldn't write the run log" in capsys.readouterr().err

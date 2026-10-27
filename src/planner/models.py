@@ -97,3 +97,13 @@ class PlannedRecord:
     uid: str
     status: str = "open"                 # open | done | skipped | unknown
     id: int | None = None
+
+
+@dataclass
+class RunRecord:
+    """A planning run in the `run_log` table."""
+    started_at: datetime
+    finished_at: datetime
+    trigger: str                         # schedule | manual | report
+    outcome: str                         # ok | error
+    message: str | None = None

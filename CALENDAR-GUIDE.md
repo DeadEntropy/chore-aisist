@@ -71,7 +71,7 @@ What each one does in more detail:
 
 ```bash
 cd <deploy-dir>/chore-aisist
-docker compose run --rm chore-aisist plan --dry-run
+docker compose exec chore-aisist planner plan --dry-run
 ```
 
 Each 7-day period starts with the events that affect chore time:
@@ -120,7 +120,7 @@ handling of subscriptions over CalDAV is the one part of this guide not tested y
 ### Step 2: find the calendar's name
 
 ```bash
-docker compose run --rm chore-aisist calendars
+docker compose exec chore-aisist planner calendars
 ```
 ```
 URI (use this in BUSY_CALENDARS)  NAME                  BLOCKS
@@ -139,15 +139,16 @@ BUSY_CALENDARS=…existing entries…;work_shared_by_<owner>=nicolas
 - Separate calendars with `;`, and people with `,` (`=nicolas,anna` for both).
 - People are `nicolas` and `anna`. A typo stops the planner with an error rather than silently ignoring it.
 
-### Step 4: check
+### Step 4: reload and check
 
 ```bash
-docker compose run --rm chore-aisist calendars        # BLOCKS should now show "nicolas"
-docker compose run --rm chore-aisist plan --dry-run   # work events show up as "Busy:" lines on chore days
+docker compose up -d                                       # the running container only reads .env when it starts
+docker compose exec chore-aisist planner calendars        # BLOCKS should now show "nicolas"
+docker compose exec chore-aisist planner plan --dry-run   # work events show up as "Busy:" lines on chore days
 ```
 
-**To disconnect a calendar,** remove its entry from `BUSY_CALENDARS`. You can also remove the share or subscription
-in Nextcloud.
+**To disconnect a calendar,** remove its entry from `BUSY_CALENDARS` and run `docker compose up -d`. You can also
+remove the share or subscription in Nextcloud.
 
 ## 4. The Chores calendar (what the planner writes)
 
@@ -162,7 +163,7 @@ read-only. Each chore is a timed event with a reminder 30 minutes before (`REMIN
 | `❔ Mow the lawn (Nicolas)` | its time passed and nobody reported it |
 
 How re-planning works. The planner re-plans **from the current moment** to the end of a 7-day window: every evening
-(from phase 4; for now you run `planner plan`), and **right after every `done` / `skip`**.
+at 20:00 (`PLAN_TIMES`), and **right after every `done` / `skip`**.
 - Chores that already started are fixed: nothing in the past is moved or deleted.
 - Chores still planned (🧹) from now on are re-planned: kept if nothing changed, moved if your calendar changed,
   removed if they no longer fit, and new ones are added. Chores go in the **earliest** free slot, so tomorrow's plan
@@ -178,16 +179,17 @@ Sunday goes back to its original plan.
 
 **Reporting** is done through Claude Code (or the commands directly):
 ```bash
-docker compose run --rm chore-aisist done weed-pool-deck              # today, by whoever it was planned for
-docker compose run --rm chore-aisist done buy-caulk --by anna --date 2026-11-01
-docker compose run --rm chore-aisist skip trim-hedge-mendel
-docker compose run --rm chore-aisist status                           # what's planned, done, unknown, overdue
+docker compose exec chore-aisist planner done weed-pool-deck              # today, by whoever it was planned for
+docker compose exec chore-aisist planner done buy-caulk --by anna --date 2026-11-01
+docker compose exec chore-aisist planner skip trim-hedge-mendel
+docker compose exec chore-aisist planner status                           # what's planned, done, unknown, overdue
 ```
 A skip doesn't reset the chore's clock: it stays due and comes back.
 
 ## 5. Settings
 
-All in the deploy folder's `.env`. Changes apply the next time the planner runs.
+All in the deploy folder's `.env`. After a change, run `docker compose up -d` in the deploy folder: the planner
+container keeps the settings it started with until it's recreated.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -200,3 +202,6 @@ All in the deploy folder's `.env`. Changes apply the next time the planner runs.
 | `NO_CHORES_KEYWORDS` | `no chores` | All-day titles that remove a day |
 | `TRAVEL_KEYWORDS` | `travel,trip,away` | All-day titles that mean away |
 | `REMINDER_MINUTES` | `30` | Phone reminder before each planned chore (0 = none) |
+| `PLAN_TIMES` | `20:00` | When the planner re-plans every day on its own; add a morning run with e.g. `07:00,20:00` |
+| `BACKUP_FOLDER` | `./backups` | Host folder for the database dumps made before every scheduled run; on another disk than `./db`, writable by the image's user (`APP_UID`) |
+| `BACKUP_KEEP_DAYS` | `30` | Days of dumps to keep (the newest is never deleted) |

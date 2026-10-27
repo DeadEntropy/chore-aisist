@@ -41,7 +41,7 @@ The Household Planner is a self-hosted assistant that:
 │  ┌──────────────────────┐  SQL   ┌────────────────────────────────────────┐  │
 │  │ chore-aisist-db      │◄──────►│ chore-aisist (app container, Python)   │  │
 │  │ MariaDB              │        │ - CLI: done / skip / plan / chore …    │  │
-│  │ - chores             │        │ - scheduler (weekly run)               │  │
+│  │ - chores             │        │ - scheduler (daily 20:00 re-plan)      │  │
 │  │ - completion history │        │ - scoring + fitting                    │  │
 │  │ - plans, run log     │        └───────┬───────────────────┬────────────┘  │
 │  └──────────────────────┘                │ CalDAV as         │               │
@@ -64,7 +64,7 @@ Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, read-only)
 
 | Component | Role |
 |---|---|
-| **`chore-aisist` (app)** | Python, one long-running container. Runs the weekly job on an internal schedule and exposes a CLI (`planner …`) that Claude Code calls with `docker exec`. Holds no data of its own. |
+| **`chore-aisist` (app)** | Python, one long-running container. Re-plans every day at 20:00 on an internal schedule (backing up first) and exposes a CLI (`planner …`) that Claude Code calls with `docker exec`. Holds no data of its own. |
 | **`chore-aisist-db` (MariaDB)** | Dedicated database container: the chore catalog, completion history, plans and run log. Data files on the NAS share (backed up). Separate from Nextcloud's database so each can be upgraded/restored independently. |
 | **App Nextcloud user (`<app-user>`)** | The app's identity. Owns the Chores calendar; read-only access to the family calendars. Details in `CALENDAR.md`. |
 | **Nextcloud calendars (read)** | Nicolas, Family, School, Anna: kids' events, gym, travel → blocked time. |
@@ -76,11 +76,14 @@ Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, read-only)
 
 ## 5. Data model
 
-Everything lives in the `chore-aisist-db` MariaDB database. `chores.json` in this repo is the **seed**: `planner
-import chores.json` adds new chores; `--update` also brings existing chores and people in line with the file, and
-`--retire` switches off (never deletes) chores no longer in it, so the file can keep being edited and re-synced.
-Edits made with `planner chore set` are overwritten by the next `--update` if the file disagrees.
-`planner export` writes the current catalog back out as JSON for a readable snapshot.
+Everything lives in the `chore-aisist-db` MariaDB database, and **the database is the catalog**: chores are
+added and edited with `planner chore add/set` (through Claude Code). The live catalog was loaded once from a JSON file;
+that file is no longer kept in step and now only serves as sample data for the tests (`tests/fixtures/chores.json`).
+
+`planner import <file>` still exists for bulk loads (e.g. a fresh install): it adds new chores; `--update` also brings
+existing chores and people in line with the file (overwriting edits made with `chore set`), and `--retire` switches
+off (never deletes) chores missing from it. `planner export` writes the catalog out as JSON for a readable snapshot.
+Backups are database dumps: they also keep the completion history and the saved plan.
 
 ```sql
 -- The chore catalog: what needs doing and how often.
@@ -138,11 +141,14 @@ CREATE TABLE planned (
   updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+-- Every real planning run: the scheduler catches up and retries from it; `planner health` checks it.
 CREATE TABLE run_log (
-  id       INT AUTO_INCREMENT PRIMARY KEY,
-  run_at   DATETIME NOT NULL,
-  kind     VARCHAR(16) NOT NULL,                        -- weekly | daily | manual
-  summary  TEXT NULL
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  started_at   DATETIME NOT NULL,
+  finished_at  DATETIME NOT NULL,
+  trigger_kind VARCHAR(16) NOT NULL,                    -- schedule | manual | report
+  outcome      VARCHAR(16) NOT NULL,                    -- ok | error
+  message      TEXT NULL                                -- what changed, or the error
 );
 ```
 
@@ -273,13 +279,13 @@ The feedback loop is conversational. On the home server, Nicolas or Anna tells C
 
 > "I mowed the lawn and weeded the pool deck this morning. Skipped the hedges."
 
-Claude Code maps that to planner commands (until the scheduler makes the container long-running, as one-off runs):
+Claude Code maps that to planner commands, run in the always-on app container:
 
 ```bash
-docker compose run --rm chore-aisist done mow-lawn --date 2026-10-31
-docker compose run --rm chore-aisist done weed-pool-deck --date 2026-10-31
-docker compose run --rm chore-aisist skip trim-hedge-mendel
-docker compose run --rm chore-aisist status
+docker compose exec chore-aisist planner done mow-lawn --date 2026-10-31
+docker compose exec chore-aisist planner done weed-pool-deck --date 2026-10-31
+docker compose exec chore-aisist planner skip trim-hedge-mendel
+docker compose exec chore-aisist planner status
 ```
 
 A `/chores` Claude Code command file on the home server (like the existing `/calendar` command) documents this
@@ -300,17 +306,46 @@ vocabulary for Claude Code.
 
 | Schedule | Job |
 |---|---|
-| Every day 20:00 (phase 4) | `planner plan`: mark unreported past chores ❔ → re-plan from now to the end of the 7-day window → update the Chores calendar → send a brief |
+| Every day 20:00 (phase 4a, `PLAN_TIMES`) | Back up the database → mark unreported past chores ❔ → re-plan from now to the end of the 7-day window → update the Chores calendar (sending a brief is phase 4b) |
 | After every `done` / `skip` | The same re-plan, from that moment |
 
 The schedule runs **inside** the app container (so `docker exec` always has a running container to talk to);
-no host cron.
+no host cron. Phase 4a (`planner serve`: `daemon.py` runs the loop, `jobs.scheduled_check` does one check, `scheduler.py`
+decides when):
+
+- `PLAN_TIMES` (default `20:00`, comma-separated for more) sets the run times, in local time.
+- A run is **due** when the last successful scheduled run started before the most recent scheduled time. So a run
+  missed while the container was down is caught up **once** when it starts (not once per missed day), and the first
+  start of a fresh deployment runs at once.
+- A failed run (Nextcloud down, say) is logged and **retried every 15 minutes** until it succeeds or the next
+  scheduled time comes; the loop never stops on an error. Each run starts from the saved plan, so a retry also
+  repairs a half-updated calendar.
+- Every real run (scheduled, `planner plan`, the re-plan after `done`/`skip`) goes in `run_log` with its outcome.
+  `planner status` shows the last scheduled run; `planner health` (the Docker healthcheck) fails when no run has
+  succeeded for 26 hours.
+- A fresh database connection per check (a day-old one would have timed out); `SIGTERM` exits at once, and an
+  interrupted run is simply redone by the next one.
+- Plan runs and `done`/`skip` reports hold one MariaDB named lock (`GET_LOCK`) through read → save → calendar
+  sync, so a report made while the 20:00 run is busy waits for it instead of being overwritten with ❔.
+- `serve` refuses to start without the calendar settings, so a misconfiguration shows at once as a restarting
+  container rather than 26 hours later.
+- **Safety** (protecting the data):
+  - **Backups:** before every scheduled run (once per scheduled time, not on retries) a gzipped
+    `mariadb-dump --single-transaction` goes to `BACKUP_DIR` (in the container, a mounted host folder on another disk
+    than `./db`), and dumps older than `BACKUP_KEEP_DAYS` (30) are deleted, never the newest. `planner backup` makes
+    one on demand (before `migrate`). A failed backup is logged but doesn't stop the re-plan, and `planner health`
+    turns unhealthy when there's no backup from the last 26 hours. The image carries `mariadb-client` for this, and
+    its user's uid is a build argument (`APP_UID`, default 1000) so it can write to the host folder.
+  - **Empty database:** planning (scheduled or manual) refuses to run on a database with no people or no chores, and
+    `serve` refuses to start: that's a wrong or freshly created database (e.g. the data folder wasn't mounted when
+    the container started), and planning on it would empty the Chores calendar, which mirrors the `planned` table.
+  - **Tests:** the database tests drop every table, so they refuse to run unless the database name ends in `_test`.
 
 ### Two folders
 
 | Folder | Contents | In git |
 |---|---|---|
-| `<dev-dir>/chore-aisist` (this repo) | Code, tests, `Dockerfile`, migrations, `chores.json` seed, docs | `DeadEntropy/chore-aisist` |
+| `<dev-dir>/chore-aisist` (this repo) | Code, tests (with a sample catalog), `Dockerfile`, migrations, docs | `DeadEntropy/chore-aisist` |
 | `<deploy-dir>/chore-aisist/` | Deployment, same pattern as the other services: `docker-compose.yml`, `README.md`, `.env`, `.env.example`, `db/` (MariaDB data files) | smarthome repo (`.env` and `db/` gitignored) |
 
 ### Compose stack (`<deploy-dir>/chore-aisist/docker-compose.yml`)
@@ -345,14 +380,17 @@ no host cron.
 | `config.py` | Settings from environment variables | — |
 | `models.py` | Data shapes: `Chore`, `Person`, `Completion`, `CalEvent`, `Busy`, `Scored`, `PlannedItem`, `Plan`, `PlannedRecord` | — |
 | `db.py` | All SQL, including `migrate()` | MariaDB |
-| `seed.py` | Import / export `chores.json` | via `db.py` |
+| `seed.py` | Import / export the catalog as JSON | via `db.py` |
 | `cli.py` | The `planner` command | the above |
 | `scoring.py` | Which chores are due and how urgent (pure) | — |
 | `availability.py` | Free chore time per person and day: default windows + calendar extras − days off − busy time (pure) | — |
 | `fitting.py` | Who does what, when, in the free time (pure) | — |
 | `calendars.py` | Read and classify the family calendars; read and write the planner's events in the Chores calendar | Nextcloud |
 | `plans.py` | The saved plan: freeze/unknown rules, reconcile, event UIDs/titles/iCalendar, calendar diff (pure) | — |
-| `jobs.py` | `run_plan` (re-plan from now, save, sync), `report` (done/skip), `dry_run`; later the scheduler | the above |
+| `jobs.py` | `run_plan` (re-plan from now, save, sync), `report` (done/skip), `dry_run`; real runs with the run log (`plan_now`), safety checks, the scheduler's check (`scheduled_check`: back up, then re-plan when due), `health` | the above |
+| `scheduler.py` | When the daily re-plan is due, when to wake up, what counts as healthy (pure) | — |
+| `backup.py` | Database dumps (`mariadb-dump`), listing and pruning them; no schedule knowledge | MariaDB, the backup folder |
+| `daemon.py` | Keeps the scheduler running (`planner serve`): loop, sleep, SIGTERM, log lines | via `jobs` |
 | `weather.py`, `brief.py`, `notify.py` | Phases 4–5 | external APIs |
 
 Only `db.py` contains SQL and only `calendars.py` speaks CalDAV; `scoring.py` and `fitting.py` take plain data and
@@ -390,7 +428,8 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 | 1 | Scoring + fitting; `planner plan --dry-run` prints a plan | Plans for sample weekends look sensible; unit tests on scoring/edge cases |
 | 2 | CalDAV read of family calendars; capacity + travel look-ahead | A real travel week produces front-loading and catch-up |
 | 3 | CalDAV write of events; `done`/`skip` CLI | Telling Claude Code "I mowed the lawn" changes next week's plan |
-| 4 | App Docker image in the compose stack, internal scheduler, notifier, Claude brief | Brief arrives Thursday evening without manual steps |
+| 4a | App container always on, internal scheduler (daily 20:00 re-plan), run log, healthcheck | The plan and ❔ marks update every evening without manual steps |
+| 4b | Notifier, Claude brief (postponed) | Brief arrives Thursday evening without manual steps |
 | 5 | Weather integration, natural-language catalog edits, polish | — |
 
 ## 11. Testing

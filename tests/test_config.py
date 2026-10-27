@@ -1,7 +1,7 @@
 import pytest
 
 from planner import config
-from planner.cli import check_calendar_people
+from planner.jobs import check_calendar_people
 
 BASE = {"CALDAV_URL": "https://nextcloud.local/remote.php/dav", "NEXTCLOUD_USER": "app",
         "NEXTCLOUD_APP_PASSWORD": "secret", "BUSY_CALENDARS": "personal=nicolas;family=nicolas,anna",

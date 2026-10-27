@@ -101,3 +101,47 @@ def test_not_before_plans_the_chore_in_the_first_period_that_reaches_it():
     item, = results[1].plan.items
     assert item.start == datetime(2026, 11, 8, 8, 0)      # Sunday, not Saturday 7th
     assert results[2].plan.items == []                    # done in period 2, so it's gone
+
+
+def test_backup_before_run_once_per_scheduled_time_and_never_fatal(tmp_path, monkeypatch):
+    from datetime import time
+
+    from planner import jobs
+    from planner.backup import backup_name
+    from planner.config import BackupSettings
+    made, lines = [], []
+    monkeypatch.setattr(jobs.backup, "dump", lambda s, folder, now, keep: made.append(now) or folder / backup_name(now))
+    backups, times = BackupSettings(str(tmp_path), 30), (time(20, 0),)
+    now = datetime(2026, 10, 27, 20, 0, 4)
+
+    def log(message, error=False):
+        lines.append((message, error))
+
+    (tmp_path / backup_name(datetime(2026, 10, 26, 20, 0))).write_bytes(b"")          # yesterday's
+    jobs.backup_before_run(None, backups, now, times, log)
+    assert made == [now]
+
+    (tmp_path / backup_name(now)).write_bytes(b"")                                    # a retry at 20:15
+    jobs.backup_before_run(None, backups, datetime(2026, 10, 27, 20, 15), times, log)
+    assert made == [now]
+
+    def broken(*args):
+        raise ValueError("disk full")
+    monkeypatch.setattr(jobs.backup, "dump", broken)
+    jobs.backup_before_run(None, backups, datetime(2026, 10, 28, 20, 0), times, log)  # logged, not raised
+    assert ("Backup failed: ValueError: disk full", True) in lines
+
+
+def test_an_unreadable_backup_folder_doesnt_stop_the_run(tmp_path, monkeypatch):
+    from datetime import time
+
+    from planner import jobs
+    from planner.config import BackupSettings
+    lines = []
+
+    def unreadable(folder):
+        raise PermissionError(13, "Permission denied", str(folder))
+    monkeypatch.setattr(jobs.backup, "latest", unreadable)
+    jobs.backup_before_run(None, BackupSettings(str(tmp_path), 30), datetime(2026, 10, 27, 20, 0), (time(20, 0),),
+                           lambda message, error=False: lines.append((message, error)))
+    assert lines and lines[0][1] and "Backup failed: PermissionError" in lines[0][0]

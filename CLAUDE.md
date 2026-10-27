@@ -19,9 +19,14 @@ is covered by the `/chores` Claude Code command in the homelab repo, not by this
 
 - `src/planner/db.py` is the **only** module with SQL; `calendars.py` the only one that talks to Nextcloud.
 - `scoring.py`, `availability.py`, `fitting.py`, `plans.py` are **pure** (no database, no network) and tested offline.
-  `jobs.py` wires them to the database and calendars; `cli.py` stays thin.
+  `jobs.py` wires them to the database and calendars (and holds the business operations: real plan runs with the
+  run log, the scheduler's check, health); `cli.py` stays thin (parse, call, print).
+- `scheduler.py` decides *when* (pure); `backup.py` is a tool (dump, list, prune) that knows nothing about the
+  schedule; `daemon.py` only keeps the process alive (loop, sleep, SIGTERM, log lines) and calls `jobs`.
 - The `planned` table is the source of truth; the Chores calendar mirrors it. Only events whose UID ends in
   `@chore-aisist` may ever be deleted.
+- The database is the chore catalog. `tests/fixtures/chores.json` is sample data for the tests only: don't sync
+  it with the real catalog, and don't `import --update` it into the real database.
 - Schema changes are new files in `src/planner/migrations/NNN_*.sql` (never edit an applied one), applied by
   `planner migrate`.
 - Settings come from environment variables (`.env`, see `.env.example`); add new ones to `.env.example`,
@@ -60,6 +65,8 @@ docker rm -f chore-test-db
 
 ## Public repository: no private details
 
+The database tests drop every table: they refuse to run unless `TEST_DB_NAME` ends in `_test`. Never weaken that.
+
 Never commit internal IPs, hostnames other than `nextcloud.local`, file paths on the server, or Nextcloud user
 names other than `ChoreAisist`. Use placeholders (`<server-ip>`, `<deploy-dir>`, `<owner-user>`) in docs and put
 real values in `.env` (gitignored). Check before committing:
@@ -71,13 +78,17 @@ grep -rnE '192\.168|/mnt/' deploy src tests .env.example *.md
 
 The running stack lives in the deployment folder (`<deploy-dir>/chore-aisist`, template in `deploy/`):
 ```bash
-docker build -t chore-aisist:0.1.0 .                      # from this repo, on master after the merge
+docker build --build-arg APP_UID=$(id -u) -t chore-aisist:0.1.0 .   # from this repo, on master after the merge
 cd <deploy-dir>/chore-aisist
-docker compose run --rm chore-aisist migrate              # if there's a new migration (back up the database first)
-docker compose run --rm chore-aisist plan --dry-run       # check
+docker compose exec chore-aisist planner backup           # before a migration
+docker compose stop chore-aisist                          # no scheduled run between migrate and the new image
+docker compose run --rm chore-aisist migrate              # if there's a new migration
+docker compose up -d                                      # recreate the scheduler container on the new image
+docker compose exec chore-aisist planner plan --dry-run   # check
 ```
 
 ## Careful: these touch the family's phones
 
 `planner plan` (without `--dry-run`), `planner done` and `planner skip` write to the shared Chores calendar,
-and `done`/`skip` re-plan from now. Use `--dry-run` while developing, and **ask the owner before any real run**.
+and `done`/`skip` re-plan from now. So does `planner serve`, every day at `PLAN_TIMES` (and once on start if a run
+was missed): don't run it from the dev checkout against the real database. Use `--dry-run` while developing, and **ask the owner before any real run**.

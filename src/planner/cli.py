@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pymysql
 
-from planner import calendars, db, jobs, seed
-from planner.config import load_calendar_settings, load_planning_settings, load_settings
+from planner import backup, calendars, daemon, db, jobs, seed
+from planner.config import load_backup_settings, load_calendar_settings, load_planning_settings, load_settings
 from planner.models import Chore
 
 NULLS = {"", "none", "null"}
@@ -20,6 +20,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         settings = load_settings()
+        if getattr(args, "own_connection", False):      # long-running: opens a connection per run
+            return args.func(None, args, settings) or 0
         with db.connect(settings) as conn:
             return args.func(conn, args, settings) or 0
     except (ValueError, pymysql.err.MySQLError) as exc:
@@ -34,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("migrate", help="create or upgrade the database tables")
     p.set_defaults(func=cmd_migrate)
 
-    p = sub.add_parser("import", help="load a seed file such as chores.json (adds missing chores)")
+    p = sub.add_parser("import", help="load chores from a JSON file (adds missing chores)")
     p.add_argument("path", type=Path)
     p.add_argument("--update", action="store_true", help="also update existing chores and people from the file")
     p.add_argument("--retire", action="store_true", help="retire (not delete) chores missing from the file")
@@ -81,6 +83,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("status", help="recent and upcoming planned chores, and what's overdue")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("serve", help="run the scheduler: re-plan every day at PLAN_TIMES (the container's command)")
+    p.set_defaults(func=cmd_serve, own_connection=True)
+
+    p = sub.add_parser("health", help="exit 0 if a planning run (and a backup) succeeded recently (Docker healthcheck)")
+    p.set_defaults(func=cmd_health)
+
+    p = sub.add_parser("backup", help="dump the database to BACKUP_DIR now (also done before every scheduled run)")
+    p.set_defaults(func=cmd_backup, own_connection=True)
     return parser
 
 
@@ -173,7 +184,10 @@ def cmd_plan(conn, args, settings):
         if dry_only:
             verb = "works" if len(dry_only) == 1 else "work"
             raise ValueError(f"{', '.join(dry_only)} only {verb} with --dry-run: a real run always plans from now")
-        return run_plan(conn, planning)
+        summary = jobs.plan_now(conn, load_calendar_settings(), planning, "manual")
+        print_plan(summary.result, summary.result.excluded)
+        print_run(summary, "Saved")
+        return
     start = args.date or date.today()
     events, buffer = [], 0
     cal = None if args.no_calendar else load_calendar_settings()
@@ -182,7 +196,7 @@ def cmd_plan(conn, args, settings):
     elif cal is None:
         print("Calendars not configured (CALDAV_URL not set): only the default chore windows, everyone free.\n")
     else:
-        check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
+        jobs.check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
         first, last = jobs.calendar_range(start, args.weeks)
         try:
             events = calendars.fetch_events(cal, first, last)
@@ -198,36 +212,11 @@ def cmd_plan(conn, args, settings):
         print_plan(result, new)
 
 
-def run_plan(conn, planning, quiet: bool = False) -> None:
-    """The real run: re-plan from now, save, and update the Chores calendar."""
-    cal = load_calendar_settings()
-    if cal is None:
-        raise ValueError("Writing the plan needs the calendars (CALDAV_URL not set); use --dry-run to only print it")
-    check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
-    now = datetime.now()
-    events = fetch_calendar_events(cal, *jobs.calendar_range(now.date(), 1))
-    try:
-        summary = jobs.run_plan(conn, cal, planning, now, events)
-    except jobs.CalendarSyncError as exc:
-        raise ValueError(f"Plan saved, but couldn't update the Chores calendar ({exc}); "
-                         "run `planner plan` again to retry") from exc
-    if not quiet:
-        print_plan(summary.result, summary.result.excluded)
-    c = summary.changes
-    print(f"{'Re-planned' if quiet else 'Saved'}: {len(c.add)} added, {len(c.move)} moved, {len(c.remove)} removed"
-          f"{f', {len(summary.unknown)} past chores marked unknown' if summary.unknown else ''}."
-          f" Chores calendar: {summary.calendar_put} events written, {summary.calendar_deleted} deleted.")
-    if c.dropped:
+def print_run(summary, verb: str) -> None:
+    print(f"{verb}: {jobs.describe(summary)}")
+    if summary.changes.dropped:
         print("Not planned again today (already done or skipped that day): "
-              + ", ".join(i.chore.id for i in c.dropped))
-
-
-def fetch_calendar_events(cal, first: date, last: date):
-    try:
-        return calendars.fetch_events(cal, first, last)
-    except Exception as exc:          # network, TLS, auth: report it plainly, don't plan on wrong data
-        raise ValueError(f"Couldn't read the calendars ({type(exc).__name__}: {exc}). "
-                         "Use --dry-run --no-calendar to plan without them.") from exc
+              + ", ".join(i.chore.id for i in summary.changes.dropped))
 
 
 def cmd_report(conn, args, settings):
@@ -245,7 +234,7 @@ def cmd_report(conn, args, settings):
     if cal is None:
         print("Calendars not configured: the Chores calendar wasn't updated or re-planned.")
         return
-    run_plan(conn, load_planning_settings(), quiet=True)         # reporting re-plans from now
+    print_run(jobs.plan_now(conn, cal, load_planning_settings(), "report"), "Re-planned")   # reporting re-plans
 
 
 def cmd_status(conn, args, settings):
@@ -271,14 +260,30 @@ def cmd_status(conn, args, settings):
     overdue = [s for s in scored if s.chore.type == "recurring" and s.urgency > 1 and s.chore.id not in upcoming]
     if overdue:
         print("\nOverdue and not planned: " + ", ".join(f"{s.chore.id} ({s.urgency:.1f})" for s in overdue))
+    if run := db.last_run(conn, trigger="schedule"):
+        print(f"\nLast scheduled run: {run.started_at:%a %d %b %H:%M}, "
+              + ("ok" if run.outcome == "ok" else f"failed: {run.message}"))
 
 
-def check_calendar_people(calendar_people: set[str], known: set[str]) -> None:
-    """Stop if BUSY_CALENDARS names someone who isn't a person in the database: their events would be ignored."""
-    unknown = sorted(calendar_people - known)
-    if unknown:
-        raise ValueError(f"BUSY_CALENDARS names unknown people: {', '.join(unknown)} "
-                         f"(known: {', '.join(sorted(known))})")
+def cmd_serve(conn, args, settings):
+    daemon.serve(settings)
+
+
+def cmd_backup(conn, args, settings):
+    backups = load_backup_settings()
+    if backups is None:
+        raise ValueError("BACKUP_DIR is not set")
+    try:
+        target = backup.dump(settings, Path(backups.folder), datetime.now(), backups.keep_days)
+    except OSError as exc:                     # unwritable folder, mariadb-dump not installed
+        raise ValueError(f"Backup failed: {type(exc).__name__}: {exc}") from exc
+    print(f"Backed up to {target}")
+
+
+def cmd_health(conn, args, settings):
+    problems, summary = jobs.health(conn, datetime.now(), load_backup_settings())
+    print(("unhealthy: " + "; ".join(problems)) if problems else f"ok: {summary}")
+    return 1 if problems else 0
 
 
 EVENT_LABELS = {"busy": "Busy", "away": "Away", "no_chores": "No chores", "extra_day": "Day off",

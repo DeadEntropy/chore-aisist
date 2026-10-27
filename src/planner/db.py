@@ -8,9 +8,11 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from planner.config import Settings
-from planner.models import Chore, Completion, Person, PlannedRecord
+from planner.models import Chore, Completion, Person, PlannedRecord, RunRecord
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+DatabaseError = pymysql.err.MySQLError          # so other modules can catch database errors without pymysql
+DB_TIMEOUT_SECONDS = 300                        # per read/write; far longer than any query here (GET_LOCK waits 120)
 
 CHORE_COLUMNS = [
     "id", "name", "category", "type",
@@ -30,15 +32,50 @@ def connect(settings: Settings):
         database=settings.db_name,
         cursorclass=DictCursor,
         autocommit=False,
+        connect_timeout=10,
+        read_timeout=DB_TIMEOUT_SECONDS,       # a dead connection fails instead of blocking the scheduler forever
+        write_timeout=DB_TIMEOUT_SECONDS,
     )
     try:
         yield conn
         conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except pymysql.err.MySQLError:        # the connection dropped: raise the original error, not this one
+            pass
         raise
     finally:
         conn.close()
+
+
+PLAN_LOCK = "chore-aisist-plan"
+PLAN_LOCK_TIMEOUT = 120         # seconds to wait for another run to finish
+
+
+@contextmanager
+def plan_lock(conn, timeout_seconds: int | None = None):
+    """Hold the planner's named lock (MariaDB GET_LOCK) for the block, so plan runs and done/skip reports from
+    different processes (the scheduler and one-off commands) never interleave their read → save → calendar steps.
+
+    Once the lock is held, the current transaction is committed, so the block's reads see everything the previous
+    holder committed (a transaction started earlier would keep reading an older snapshot).
+    """
+    if timeout_seconds is None:
+        timeout_seconds = PLAN_LOCK_TIMEOUT
+    with conn.cursor() as cur:
+        cur.execute("SELECT GET_LOCK(%s, %s) AS got", (PLAN_LOCK, timeout_seconds))
+        if cur.fetchone()["got"] != 1:
+            raise ValueError(f"Another planner run is still busy (waited {timeout_seconds} s); try again in a minute")
+    try:
+        conn.commit()
+        yield
+    finally:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT RELEASE_LOCK(%s)", (PLAN_LOCK,))
+        except pymysql.err.MySQLError:        # connection gone: the server drops its locks anyway; keep the real error
+            pass
 
 
 # --- migrations -------------------------------------------------------------
@@ -221,3 +258,29 @@ def update_planned(conn, record: PlannedRecord) -> None:
 def delete_planned(conn, uids: list[str]) -> None:
     with conn.cursor() as cur:
         cur.executemany("DELETE FROM planned WHERE caldav_uid = %s", [(u,) for u in uids])
+
+
+# --- run log ----------------------------------------------------------------------
+
+def log_run(conn, run: RunRecord) -> None:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO run_log (started_at, finished_at, trigger_kind, outcome, message)"
+                    " VALUES (%s, %s, %s, %s, %s)",
+                    (run.started_at, run.finished_at, run.trigger, run.outcome, run.message))
+
+
+def last_run(conn, trigger: str | None = None, outcome: str | None = None) -> RunRecord | None:
+    """The most recent run, optionally only of one trigger and/or outcome."""
+    where, args = [], []
+    if trigger:
+        where.append("trigger_kind = %s")
+        args.append(trigger)
+    if outcome:
+        where.append("outcome = %s")
+        args.append(outcome)
+    with conn.cursor() as cur:
+        cur.execute("SELECT started_at, finished_at, trigger_kind, outcome, message FROM run_log"
+                    + (" WHERE " + " AND ".join(where) if where else "")
+                    + " ORDER BY started_at DESC, id DESC LIMIT 1", args)
+        r = cur.fetchone()
+    return RunRecord(r["started_at"], r["finished_at"], r["trigger_kind"], r["outcome"], r["message"]) if r else None

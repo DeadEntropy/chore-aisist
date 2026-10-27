@@ -2,10 +2,12 @@
 
 import os
 from dataclasses import dataclass
+from datetime import time
 
 from dotenv import load_dotenv
 
 from planner.availability import Windows, parse_window, parse_windows
+from planner.scheduler import parse_times
 
 KEYWORD_SETTINGS = {                 # event kind → (environment variable, default keywords)
     "away": ("TRAVEL_KEYWORDS", "travel,trip,away"),
@@ -68,6 +70,30 @@ def load_planning_settings() -> PlanningSettings:
         windows=parse_windows(os.environ.get("CHORE_WINDOWS", "sat 08:00-18:00; sun 08:00-18:00")),
         extra_day_window=parse_window(os.environ.get("EXTRA_DAY_WINDOW", "08:00-18:00")),
     )
+
+
+@dataclass(frozen=True)
+class BackupSettings:
+    folder: str                                # where dumps go (BACKUP_DIR); in the container, a mounted folder
+    keep_days: int = 30                        # older dumps are deleted (BACKUP_KEEP_DAYS); the newest is always kept
+
+
+def load_backup_settings() -> BackupSettings | None:
+    """Backup settings, or None when BACKUP_DIR isn't set (no backups)."""
+    load_dotenv()
+    folder = os.environ.get("BACKUP_DIR")
+    if not folder:
+        return None
+    keep = int(os.environ.get("BACKUP_KEEP_DAYS", "30"))
+    if keep < 1:
+        raise ValueError(f"BACKUP_KEEP_DAYS must be 1 or more, got {keep}")
+    return BackupSettings(folder, keep)
+
+
+def load_plan_times() -> tuple[time, ...]:
+    """Times of day for the scheduled re-plan (PLAN_TIMES, default 20:00), sorted."""
+    load_dotenv()
+    return parse_times(os.environ.get("PLAN_TIMES", "20:00"))
 
 
 def load_calendar_settings() -> CalendarSettings | None:
