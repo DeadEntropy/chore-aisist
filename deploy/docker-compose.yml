@@ -72,6 +72,14 @@ services:
       CHORES_CALENDAR_URI: ${CHORES_CALENDAR_URI:-chores}
       REMINDER_MINUTES: ${REMINDER_MINUTES:-30}
       PLAN_TIMES: ${PLAN_TIMES:-20:00}
+      # Weather for outdoor chores: optional, leave WEATHER_LATITUDE unset in .env for none.
+      WEATHER_LATITUDE: ${WEATHER_LATITUDE:-}
+      WEATHER_LONGITUDE: ${WEATHER_LONGITUDE:-}
+      WEATHER_DAYS: ${WEATHER_DAYS:-3}
+      WEATHER_MODELS: ${WEATHER_MODELS:-ecmwf_ifs025,best_match}
+      MAX_RAIN_PERCENT: ${MAX_RAIN_PERCENT:-20}
+      MAX_FEELS_LIKE_C: ${MAX_FEELS_LIKE_C:-35}
+      MAX_UV_INDEX: ${MAX_UV_INDEX:-7}
       BACKUP_DIR: /backups                                      # a dump before every scheduled run
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
     extra_hosts:

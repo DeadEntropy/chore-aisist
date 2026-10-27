@@ -190,7 +190,30 @@ docker compose exec chore-aisist planner status                           # what
 ```
 A skip doesn't reset the chore's clock: it stays due and comes back.
 
-## 5. Settings
+## 5. The weather (outdoor chores)
+
+Outdoor chores (`outdoor=yes` in the chore list) are kept out of rain, heat and strong sun, using the hourly
+forecast for **today and the next 3 days** (`WEATHER_DAYS`). Further out the forecast is too unreliable, so the
+planner ignores it; the evening re-plan applies it as the day comes near (a Sunday is checked from Thursday evening).
+
+An outdoor chore doesn't go at a time when:
+- the **chance of rain, averaged over the chore**, is over 20% (`MAX_RAIN_PERCENT`). A 3-hour chore with 40% in the
+  first hour and none after averages 13%: it goes ahead. A wet Sunday at 75% all day: no outdoor chores that day;
+- **any hour** of it feels hotter than 35 °C / 95 °F (`MAX_FEELS_LIKE_C`), or has a UV index over 7
+  (`MAX_UV_INDEX`; 8 and up burns fast): typically the early afternoon in summer.
+
+It then goes to the next good time (later that day, or another day); if there's none in the 7 days, it's left out this
+time and comes back later. Indoor chores ignore the weather. `planner plan --dry-run` shows the forecast it used:
+```
+  Weather: Sun 01 Nov  rain 33-86%, feels like up to 32°C, UV up to 6
+  Didn't fit: trim-bushes (weather whenever it would fit (Sat 31 Oct 11:00: rain 40% > 20%)); ...
+```
+If the weather service can't be reached, the planner tries twice more (after 30 s, then 60 s), then says so in its
+log and plans as if the weather were fine. If it refuses the settings (e.g. a typo in `WEATHER_MODELS`), the planner
+also plans without the weather, and `planner health` reports it (the container shows as unhealthy) until a run gets the
+forecast again.
+
+## 6. Settings
 
 All in the deploy folder's `.env`. After a change, run `docker compose up -d` in the deploy folder: the planner
 container keeps the settings it started with until it's recreated.
@@ -206,6 +229,12 @@ container keeps the settings it started with until it's recreated.
 | `NO_CHORES_KEYWORDS` | `no chores` | All-day titles that remove a day |
 | `TRAVEL_KEYWORDS` | `travel,trip,away` | All-day titles that mean away |
 | `REMINDER_MINUTES` | `30` | Phone reminder before each planned chore (0 = none) |
+| `WEATHER_LATITUDE`, `WEATHER_LONGITUDE` | unset | Where the chores happen; unset = no weather |
+| `WEATHER_DAYS` | `3` | Forecast used for today and this many days after (0 = today only) |
+| `WEATHER_MODELS` | `ecmwf_ifs025,best_match` | [Open-Meteo models](https://open-meteo.com/en/docs), preferred first; each value comes from the first that has it |
+| `MAX_RAIN_PERCENT` | `20` | Highest average chance of rain over an outdoor chore |
+| `MAX_FEELS_LIKE_C` | `35` | Hottest feels-like temperature (°C) in any hour of an outdoor chore |
+| `MAX_UV_INDEX` | `7` | Highest UV index in any hour of an outdoor chore |
 | `PLAN_TIMES` | `20:00` | When the planner re-plans every day on its own; add a morning run with e.g. `07:00,20:00` |
 | `BACKUP_FOLDER` | `./backups` | Host folder for the database dumps made before every scheduled run; on another disk than `./db`, writable by the image's user (`APP_UID`) |
 | `BACKUP_KEEP_DAYS` | `30` | Days of dumps to keep (the newest is never deleted) |

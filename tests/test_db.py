@@ -414,6 +414,18 @@ def test_serve_refuses_to_start_on_an_empty_database(conn, settings, monkeypatch
         daemon.serve(settings)
 
 
+def test_health_flags_refused_weather_settings_until_a_run_gets_the_forecast(conn):
+    from planner import jobs
+    from planner.models import RunRecord
+    now = datetime.now()
+    db.log_run(conn, RunRecord(now - timedelta(hours=2), now, "schedule", "ok",
+                               f"1 added. Weather forecast unavailable ({jobs.WEATHER_REJECTED}: bad model): planned without it."))
+    problems, _ = jobs.health(conn, now, None)
+    assert len(problems) == 1 and "refused the WEATHER_ settings" in problems[0]
+    db.log_run(conn, RunRecord(now - timedelta(hours=1), now, "manual", "ok", "0 added."))   # settings fixed
+    assert jobs.health(conn, now, None)[0] == []
+
+
 def test_health_also_needs_a_recent_backup(conn, tmp_path):
     from planner import jobs
     from planner.backup import backup_name

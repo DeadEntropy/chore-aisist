@@ -53,7 +53,7 @@ The Household Planner is a self-hosted assistant that:
 │                               └──────────────────────────────────────────┘   │
 └──────────────────────────────────────────┬───────────────────────────────────┘
                                            │ HTTPS (outbound only)
-                                           ├──► Weather API (forecast for the weekend)
+                                           ├──► Weather API (Open-Meteo: hourly forecast, next days)
                                            ├──► Claude API (weekly brief text)
                                            └──► Notification channel (Home Assistant / email / Nextcloud Talk)
 
@@ -70,7 +70,7 @@ Phones / laptops ◄── CalDAV sync ── Nextcloud  (view plan, read-only)
 | **Nextcloud calendars (read)** | Nicolas, Family, School, Anna: kids' events, gym, travel → blocked time. |
 | **"Chores" calendar (write)** | Planned chores as events; shared read-only with Nicolas and Anna. |
 | **Claude Code** | The human interface: turns "I've done the lawn" or "hedges take 3 hours" into CLI calls; can also query the database directly for questions ("when did we last fertilize?"). |
-| **Weather API** | Moves outdoor work to the drier day. |
+| **Weather API** | Open-Meteo hourly forecast (free, no key): keeps outdoor chores out of rain, heat and strong sun. |
 | **Claude API** | Turns the plan into a readable brief; later, parses natural-language edits. |
 | **Notifier** | Delivers the brief (Home Assistant push, email, or Nextcloud Talk). |
 
@@ -155,7 +155,7 @@ CREATE TABLE run_log (
 - `last_done(chore)` = latest `completion.completed_on` with `outcome = done`. A chore with no history is treated as due.
 - A `one_off` chore is finished once it has a `done` completion; it is never planned again. No separate status column
   to keep in sync. Items already ticked in the ToDoList import get a completion with `source = import`.
-- `outdoor` doubles as "weather-sensitive": every outdoor chore can be moved by rain.
+- `outdoor` doubles as "weather-sensitive": every outdoor chore can be moved by rain, heat or strong sun (§6.5).
 - Purchases are not a field: anything that needs buying is its own `Buy …` chore, and the job lists it in
   `needs` (JSON) / `chore_need` (database). A chore is only eligible once every chore it needs has a `done`
   completion. A list rather than a single value, because one purchase can unblock several jobs (`buy-caulk`
@@ -237,7 +237,7 @@ Calendar → person: Nicolas → Nicolas, Anna → Anna, Family and School → b
 1. Sort eligible chores by `score` descending, each one right after any pending needs it waits for (see §6.1:
    a job whose needs aren't done is still eligible if they can be planned earlier the same weekend).
 2. For each chore, assign it to the eligible person (per `assignee`) with the most free time left, on a suitable day.
-3. Outdoor chores go to the day with the better forecast; if both days are bad, they stay in the plan but are flagged "weather permitting".
+3. Outdoor chores skip the times the forecast rules out (§6.5); if no allowed time fits, they're not planned this time.
 4. Skip a chore if no one has a free slot long enough; it will score higher next time.
 5. Mark the lowest-scored scheduled chores as "skippable if rushed" in the brief.
 
@@ -253,6 +253,33 @@ each planned chore is done on its day and plans the following weekends too, to s
 It reads the family calendars (phase 2) and prints what blocks each weekend (`Busy:` / `Away:` lines) and when
 travel look-ahead moved the scoring date; `--no-calendar` treats everyone as free. If the calendars can't be read
 (network, certificate, password), the command stops with the reason rather than planning on wrong data.
+
+### 6.5 Weather
+
+`weather.py` reads the hourly forecast from Open-Meteo (`WEATHER_LATITUDE` / `WEATHER_LONGITUDE`; unset = no
+weather) and gives `fitting` a rule for outdoor chores. A start time is ruled out when, over the chore's duration:
+
+- the **chance of rain, averaged** over the chore (each hour weighted by the minutes it covers) is over
+  `MAX_RAIN_PERCENT` (20). A 3-hour chore with 40% in its first hour and 0% after averages 13%: it goes ahead;
+- **any hour** feels hotter than `MAX_FEELS_LIKE_C` (35 °C / 95 °F), or has a UV index over `MAX_UV_INDEX` (7; 8 and
+  up is "very high"). Heat and sunburn come from the worst hour, so these aren't averaged.
+
+The outdoor chore then tries the next quarter hour, the next free time, the next day; if nothing fits it's unplanned
+with the reason (`weather whenever it would fit (Sun 01 Nov 08:00: rain 33% > 20%)`) and comes back on a later run.
+Indoor chores ignore the weather.
+
+- **Horizon:** the forecast is used for today and the next `WEATHER_DAYS` (3) days only; further out it's too
+  unreliable, so those days are planned as if the weather were fine. The daily re-plan applies the forecast as a
+  day comes near: a Sunday is first checked by Thursday evening's run.
+- **Models:** weather models disagree, a lot in the Florida rainy season. `WEATHER_MODELS` lists Open-Meteo models in
+  order of preference; each value comes from the first that has it. Default `ecmwf_ifs025,best_match`: ECMWF
+  matched the phone's forecast best when it was chosen; it has no UV index, which then comes from `best_match`.
+- **Failure:** if the forecast can't be read, it's tried twice more (after 30 s and 60 s, so a short outage doesn't
+  move outdoor chores back into the rain on everyone's phone), then the error is logged (and kept in the run log)
+  and the plan is made without it, as before the weather existed: the weather is a nice-to-have, unlike the family
+  calendars. Settings Open-Meteo refuses (4xx, e.g. a misspelt model) aren't retried; the run log keeps its reason
+  and `planner health` is unhealthy until a run gets the forecast again, so a typo can't go unnoticed.
+- `planner plan --dry-run` prints a `Weather:` line per chore day in the horizon.
 
 ## 7. CalDAV integration
 
@@ -396,7 +423,8 @@ decides when):
 | `scheduler.py` | When the daily re-plan is due, when to wake up, what counts as healthy (pure) | — |
 | `backup.py` | Database dumps (`mariadb-dump`), listing and pruning them; no schedule knowledge | MariaDB, the backup folder |
 | `daemon.py` | Keeps the scheduler running (`planner serve`): loop, sleep, SIGTERM, log lines | via `jobs` |
-| `weather.py`, `brief.py`, `notify.py` | Phases 4–5 | external APIs |
+| `weather.py` | Hourly forecast (Open-Meteo) and the rule for outdoor chores (rain, heat, UV); pure except `fetch_forecast` | Open-Meteo |
+| `brief.py`, `notify.py` | Phase 4b | external APIs |
 
 Only `db.py` contains SQL and only `calendars.py` speaks CalDAV; `scoring.py` and `fitting.py` take plain data and
 are tested without a database or network.
@@ -439,7 +467,7 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 | 3 | CalDAV write of events; `done`/`skip` CLI | Telling Claude Code "I mowed the lawn" changes next week's plan |
 | 4a | App container always on, internal scheduler (daily 20:00 re-plan), run log, healthcheck | The plan and ❔ marks update every evening without manual steps |
 | 4b | Notifier, Claude brief (postponed) | Brief arrives Thursday evening without manual steps |
-| 5 | Weather integration, natural-language catalog edits, polish | — |
+| 5 | Weather integration (done: §6.5), natural-language catalog edits, polish | Outdoor chores avoid rain, heat and strong sun in the next days |
 
 ## 11. Testing
 
@@ -471,3 +499,5 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - **Seasonality**: removed from the chore fields for now; add back if a chore really only applies part of the year.
 - **Not before**: a single optional date per chore (`not_before`) for "do this in early December"; not a season or a
   deadline. Priority decides how soon after the date it gets done.
+- **Weather**: only outdoor chores; average chance of rain over the chore ≤ 20%, no hour over 35 °C feels-like or UV 7;
+  forecast used for the next 3 days only; ECMWF first; a missing forecast never stops the plan.

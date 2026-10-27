@@ -20,6 +20,7 @@ src/planner/
   availability.py  free chore time per person and day (default windows + calendar keywords)
   fitting.py    who does what, when, in the free time
   calendars.py  reads the family calendars from Nextcloud (CalDAV) → busy time and travel
+  weather.py    hourly forecast (Open-Meteo) and the rule that keeps outdoor chores out of rain, heat and sun
   plans.py      the saved plan: freeze/unknown rules, re-planning, Chores calendar events
   jobs.py       ties it together: plan runs (with the run log), done/skip, calendar sync, the scheduler's
                 check (back up, then re-plan when due), health

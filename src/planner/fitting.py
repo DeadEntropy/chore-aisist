@@ -4,9 +4,11 @@ Greedy: take chores from highest score down and give each one the earliest free 
 for 'both' chores). Earliest-first keeps re-plans stable: a daily run that adds a new day at the end of the window
 doesn't pull chores away from tomorrow. Free time comes from `availability`; there is no hours budget. A chore
 waiting for another (e.g. a job and its purchase) is only placed after that one ends, and a chore with a
-`not_before` date is not placed on an earlier day.
+`not_before` date is not placed on an earlier day. An outdoor chore skips the times the weather rules out (`weather`
+passes the rule in; without it, the weather is ignored).
 """
 
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 
 from planner.availability import Slots, intersect, subtract
@@ -20,8 +22,10 @@ def round_up(minutes: int, step: int = START_STEP_MINUTES) -> int:
 
 
 def plan_period(scored: list[Scored], people: list[Person], days: list[date],
-                free: dict[tuple[str, date], Slots], ready_at: dict[str, datetime] | None = None) -> Plan:
-    """`ready_at`: when chores already in progress (not in `scored`) end; chores that need them start after that."""
+                free: dict[tuple[str, date], Slots], ready_at: dict[str, datetime] | None = None,
+                weather: Callable[[date, int, int], str | None] | None = None) -> Plan:
+    """`ready_at`: when chores already in progress (not in `scored`) end; chores that need them start after that.
+    `weather(day, start, end)`: why that time is unsuitable for an outdoor chore, or None (see `weather.check`)."""
     free = {key: list(slots) for key, slots in free.items()}      # don't modify the caller's slots
     items: list[PlannedItem] = []
     placed_end: dict[str, datetime] = dict(ready_at or {})
@@ -40,14 +44,17 @@ def plan_period(scored: list[Scored], people: list[Person], days: list[date],
             unplanned.append((s.chore, f"unknown assignee '{s.chore.assignee}'"))
             continue
 
-        placed = None
+        placed, ruled_out = None, None
         for group in groups:
-            slot = _earliest_slot(group, days, free, duration, not_before)
+            slot, why = _earliest_slot(group, days, free, duration, not_before,
+                                       weather if s.chore.outdoor else None)
+            ruled_out = ruled_out or why
             if slot:
                 placed = (group, *slot)
                 break
         if placed is None:
-            unplanned.append((s.chore, "no free slot long enough"))
+            unplanned.append((s.chore, f"weather whenever it would fit ({ruled_out})" if ruled_out
+                              else "no free slot long enough"))
             continue
 
         group, day, start = placed
@@ -72,9 +79,12 @@ def _candidate_groups(assignee: str, people: list[Person], days: list[date],
     return [[assignee]] if assignee in ids else []
 
 
-def _earliest_slot(group, days, free, duration, not_before=None) -> tuple[date, int] | None:
+def _earliest_slot(group, days, free, duration, not_before=None,
+                   weather=None) -> tuple[tuple[date, int] | None, str | None]:
     """The earliest slot long enough where everyone in the group is free (at or after `not_before`, if given),
-    starting on a quarter hour."""
+    starting on a quarter hour, and that `weather` allows; with the first time the weather ruled out, e.g.
+    'Sun 01 Nov 08:00: rain 23%' (None if it ruled out none)."""
+    ruled_out = None
     for day in days:
         earliest = 0
         if not_before is not None:
@@ -85,11 +95,15 @@ def _earliest_slot(group, days, free, duration, not_before=None) -> tuple[date, 
         common = free[(group[0], day)]
         for p in group[1:]:
             common = intersect(common, free[(p, day)])
-        fitting = [round_up(max(start, earliest)) for start, end in common
-                   if end - round_up(max(start, earliest)) >= duration]
-        if fitting:
-            return day, fitting[0]
-    return None
+        for start, end in common:
+            at = round_up(max(start, earliest))
+            while end - at >= duration:
+                why = weather(day, at, at + duration) if weather else None
+                if why is None:
+                    return (day, at), ruled_out
+                ruled_out = ruled_out or f"{_at(day, at):%a %d %b %H:%M}: {why}"
+                at += START_STEP_MINUTES
+    return None, ruled_out
 
 
 def _minutes(t: time) -> int:
