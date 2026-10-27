@@ -1,15 +1,17 @@
 """The `planner` command. Thin wrappers around the other modules."""
 
 import argparse
+import signal
 import sys
+import time as clock
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pymysql
 
-from planner import calendars, db, jobs, seed
-from planner.config import load_calendar_settings, load_planning_settings, load_settings
-from planner.models import Chore
+from planner import calendars, db, jobs, scheduler, seed
+from planner.config import load_calendar_settings, load_plan_times, load_planning_settings, load_settings
+from planner.models import Chore, RunRecord
 
 NULLS = {"", "none", "null"}
 TRUE_WORDS = {"1", "true", "yes", "y"}
@@ -20,6 +22,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         settings = load_settings()
+        if getattr(args, "own_connection", False):      # long-running: opens a connection per run
+            return args.func(None, args, settings) or 0
         with db.connect(settings) as conn:
             return args.func(conn, args, settings) or 0
     except (ValueError, pymysql.err.MySQLError) as exc:
@@ -81,6 +85,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("status", help="recent and upcoming planned chores, and what's overdue")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("serve", help="run the scheduler: re-plan every day at PLAN_TIMES (the container's command)")
+    p.set_defaults(func=cmd_serve, own_connection=True)
+
+    p = sub.add_parser("health", help="exit 0 if a planning run succeeded recently (Docker healthcheck)")
+    p.set_defaults(func=cmd_health)
     return parser
 
 
@@ -172,7 +182,7 @@ def cmd_plan(conn, args, settings):
         if dry_only:
             verb = "works" if len(dry_only) == 1 else "work"
             raise ValueError(f"{', '.join(dry_only)} only {verb} with --dry-run: a real run always plans from now")
-        return run_plan(conn, planning)
+        return run_plan(conn, planning, trigger="manual")
     start = args.date or date.today()
     events, buffer = [], 0
     cal = None if args.no_calendar else load_calendar_settings()
@@ -197,8 +207,28 @@ def cmd_plan(conn, args, settings):
         print_plan(result, new)
 
 
-def run_plan(conn, planning, quiet: bool = False) -> None:
-    """The real run: re-plan from now, save, and update the Chores calendar."""
+def run_plan(conn, planning, quiet: bool = False, trigger: str = "manual") -> None:
+    """The real run: re-plan from now, save, and update the Chores calendar. Every run, failed or not, is recorded
+    in the run log (the scheduler reads it to catch up and retry)."""
+    started = datetime.now()
+    try:
+        message = _run_plan(conn, planning, quiet)
+    except Exception as exc:
+        conn.rollback()
+        _log_run(conn, RunRecord(started, datetime.now(), trigger, "error", str(exc)))
+        raise
+    _log_run(conn, RunRecord(started, datetime.now(), trigger, "ok", message))
+
+
+def _log_run(conn, run: RunRecord) -> None:
+    try:
+        db.log_run(conn, run)
+        conn.commit()
+    except pymysql.err.MySQLError as exc:          # the run itself matters more than its log entry
+        print(f"warning: couldn't write the run log ({exc})", file=sys.stderr)
+
+
+def _run_plan(conn, planning, quiet: bool) -> str:
     cal = load_calendar_settings()
     if cal is None:
         raise ValueError("Writing the plan needs the calendars (CALDAV_URL not set); use --dry-run to only print it")
@@ -213,12 +243,14 @@ def run_plan(conn, planning, quiet: bool = False) -> None:
     if not quiet:
         print_plan(summary.result, summary.result.excluded)
     c = summary.changes
-    print(f"{'Re-planned' if quiet else 'Saved'}: {len(c.add)} added, {len(c.move)} moved, {len(c.remove)} removed"
-          f"{f', {len(summary.unknown)} past chores marked unknown' if summary.unknown else ''}."
-          f" Chores calendar: {summary.calendar_put} events written, {summary.calendar_deleted} deleted.")
+    message = (f"{len(c.add)} added, {len(c.move)} moved, {len(c.remove)} removed"
+               f"{f', {len(summary.unknown)} past chores marked unknown' if summary.unknown else ''}."
+               f" Chores calendar: {summary.calendar_put} events written, {summary.calendar_deleted} deleted.")
+    print(f"{'Re-planned' if quiet else 'Saved'}: {message}")
     if c.dropped:
         print("Not planned again today (already done or skipped that day): "
               + ", ".join(i.chore.id for i in c.dropped))
+    return message
 
 
 def fetch_calendar_events(cal, first: date, last: date):
@@ -244,7 +276,7 @@ def cmd_report(conn, args, settings):
     if cal is None:
         print("Calendars not configured: the Chores calendar wasn't updated or re-planned.")
         return
-    run_plan(conn, load_planning_settings(), quiet=True)         # reporting re-plans from now
+    run_plan(conn, load_planning_settings(), quiet=True, trigger="report")   # reporting re-plans from now
 
 
 def cmd_status(conn, args, settings):
@@ -270,6 +302,54 @@ def cmd_status(conn, args, settings):
     overdue = [s for s in scored if s.chore.type == "recurring" and s.urgency > 1 and s.chore.id not in upcoming]
     if overdue:
         print("\nOverdue and not planned: " + ", ".join(f"{s.chore.id} ({s.urgency:.1f})" for s in overdue))
+    if run := db.last_run(conn, trigger="schedule"):
+        print(f"\nLast scheduled run: {run.started_at:%a %d %b %H:%M}, "
+              + ("ok" if run.outcome == "ok" else f"failed: {run.message}"))
+
+
+def cmd_serve(conn, args, settings):
+    """Re-plan at every PLAN_TIMES moment, forever. A run missed while the container was down is caught up once on
+    start; a failed run is retried every 15 minutes until it succeeds or the next scheduled time comes."""
+    times = load_plan_times()
+    planning = load_planning_settings()
+    load_calendar_settings()                       # fail at start, not at 20:00, if the settings are wrong
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))      # `docker stop`: exit at once (we're PID 1)
+    log(f"Scheduler started: re-plans every day at {', '.join(t.strftime('%H:%M') for t in times)}")
+    while True:
+        failed = False
+        try:
+            with db.connect(settings) as c:           # a fresh connection per check: a day-old one would time out
+                last = db.last_run(c, trigger="schedule", outcome="ok")
+                if scheduler.is_due(datetime.now(), times, last.started_at if last else None):
+                    log("Scheduled re-plan")
+                    run_plan(c, planning, quiet=True, trigger="schedule")
+        except Exception as exc:                      # log and carry on: the next run starts from the saved plan
+            failed = True
+            log(f"Run failed: {type(exc).__name__}: {exc}", error=True)
+        wake = scheduler.next_wake(datetime.now(), times, failed)
+        log(f"Next check {wake:%a %d %b %H:%M}")
+        sleep_until(wake)
+
+
+def cmd_health(conn, args, settings):
+    last = db.last_run(conn, outcome="ok")
+    if scheduler.is_healthy(datetime.now(), last.started_at if last else None):
+        print(f"ok: last successful run {last.started_at:%a %d %b %H:%M} ({last.trigger})")
+        return 0
+    failed = db.last_run(conn)
+    print("unhealthy: no successful run in the last 26 hours"
+          + (f"; last attempt {failed.started_at:%a %d %b %H:%M}: {failed.message}" if failed else ""))
+    return 1
+
+
+def sleep_until(moment: datetime) -> None:
+    """Sleep in short steps, so a clock change (or a suspended host) doesn't make us oversleep."""
+    while (left := (moment - datetime.now()).total_seconds()) > 0:
+        clock.sleep(min(left, 300))
+
+
+def log(message: str, error: bool = False) -> None:
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}", file=sys.stderr if error else sys.stdout, flush=True)
 
 
 def check_calendar_people(calendar_people: set[str], known: set[str]) -> None:

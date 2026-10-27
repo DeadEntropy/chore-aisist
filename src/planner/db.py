@@ -8,7 +8,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from planner.config import Settings
-from planner.models import Chore, Completion, Person, PlannedRecord
+from planner.models import Chore, Completion, Person, PlannedRecord, RunRecord
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -221,3 +221,29 @@ def update_planned(conn, record: PlannedRecord) -> None:
 def delete_planned(conn, uids: list[str]) -> None:
     with conn.cursor() as cur:
         cur.executemany("DELETE FROM planned WHERE caldav_uid = %s", [(u,) for u in uids])
+
+
+# --- run log ----------------------------------------------------------------------
+
+def log_run(conn, run: RunRecord) -> None:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO run_log (started_at, finished_at, trigger_kind, outcome, message)"
+                    " VALUES (%s, %s, %s, %s, %s)",
+                    (run.started_at, run.finished_at, run.trigger, run.outcome, run.message))
+
+
+def last_run(conn, trigger: str | None = None, outcome: str | None = None) -> RunRecord | None:
+    """The most recent run, optionally only of one trigger and/or outcome."""
+    where, args = [], []
+    if trigger:
+        where.append("trigger_kind = %s")
+        args.append(trigger)
+    if outcome:
+        where.append("outcome = %s")
+        args.append(outcome)
+    with conn.cursor() as cur:
+        cur.execute("SELECT started_at, finished_at, trigger_kind, outcome, message FROM run_log"
+                    + (" WHERE " + " AND ".join(where) if where else "")
+                    + " ORDER BY started_at DESC, id DESC LIMIT 1", args)
+        r = cur.fetchone()
+    return RunRecord(r["started_at"], r["finished_at"], r["trigger_kind"], r["outcome"], r["message"]) if r else None

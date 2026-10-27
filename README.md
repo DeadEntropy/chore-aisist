@@ -22,6 +22,7 @@ src/planner/
   calendars.py  reads the family calendars from Nextcloud (CalDAV) → busy time and travel
   plans.py      the saved plan: freeze/unknown rules, re-planning, Chores calendar events
   jobs.py       ties it together: plan runs, done/skip, calendar sync
+  scheduler.py  when the daily re-plan is due, retries, health
   cli.py        the `planner` command
   migrations/   schema changes, applied in name order by `planner migrate`
 tests/          pytest; database tests need a throwaway MariaDB (see below)
@@ -29,7 +30,8 @@ deploy/         compose template + .env.example for the deployment folder
 chores.json     seed data, loaded once with `planner import`
 ```
 
-A later phase adds the scheduler (daily 20:00 run) and the weekly brief (see DESIGN.md §10).
+The app container runs `planner serve`: it re-plans every day at 20:00 (`PLAN_TIMES`). A weekly brief comes later
+(see DESIGN.md §10).
 
 ## Development
 
@@ -84,6 +86,8 @@ planner plan                             plan the next 7 days, save it, update t
 planner done <chore> [--date D] [--by nicolas,anna]   record a chore as done (✅ in the calendar)
 planner skip <chore> [--date D]          record a chore as skipped (⏭)
 planner status                           last/next 7 days with ✅ ⏭ ❔ 🧹, and what's overdue
+planner serve                            the scheduler: re-plan every day at PLAN_TIMES (the container's command)
+planner health                           exit 0 if a run succeeded in the last 26 hours (Docker healthcheck)
 planner plan --dry-run [--date YYYY-MM-DD] [--weeks N] [--no-calendar]
                                          print the plan for the next 7 days (and the next N-1
                                          periods, assuming planned chores get done), around
@@ -103,9 +107,11 @@ cd <deploy-dir>/chore-aisist
 docker compose up -d chore-aisist-db
 docker compose run --rm chore-aisist migrate
 docker compose run --rm chore-aisist import /app/chores.json
+docker compose up -d                                     # starts the scheduler
+docker compose exec chore-aisist planner status          # any other command, in the running container
 ```
 
 | Container | Port | Notes |
 |---|---|---|
 | `chore-aisist-db` | `127.0.0.1:3307` → 3306 | MariaDB, this machine only |
-| `chore-aisist` | none | runs one-off commands until the scheduler exists |
+| `chore-aisist` | none | always on: the scheduler (`planner serve`), healthcheck `planner health` |

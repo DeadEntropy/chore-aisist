@@ -137,11 +137,14 @@ CREATE TABLE planned (
   updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+-- Every real planning run: the scheduler catches up and retries from it; `planner health` checks it.
 CREATE TABLE run_log (
-  id       INT AUTO_INCREMENT PRIMARY KEY,
-  run_at   DATETIME NOT NULL,
-  kind     VARCHAR(16) NOT NULL,                        -- weekly | daily | manual
-  summary  TEXT NULL
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  started_at   DATETIME NOT NULL,
+  finished_at  DATETIME NOT NULL,
+  trigger_kind VARCHAR(16) NOT NULL,                    -- schedule | manual | report
+  outcome      VARCHAR(16) NOT NULL,                    -- ok | error
+  message      TEXT NULL                                -- what changed, or the error
 );
 ```
 
@@ -298,7 +301,20 @@ vocabulary for Claude Code.
 | After every `done` / `skip` | The same re-plan, from that moment |
 
 The schedule runs **inside** the app container (so `docker exec` always has a running container to talk to);
-no host cron.
+no host cron. Phase 4a (`scheduler.py`, `planner serve`):
+
+- `PLAN_TIMES` (default `20:00`, comma-separated for more) sets the run times, in local time.
+- A run is **due** when the last successful scheduled run started before the most recent scheduled time. So a run
+  missed while the container was down is caught up **once** when it starts (not once per missed day), and the first
+  start of a fresh deployment runs at once.
+- A failed run (Nextcloud down, say) is logged and **retried every 15 minutes** until it succeeds or the next
+  scheduled time comes; the loop never stops on an error. Each run starts from the saved plan, so a retry also
+  repairs a half-updated calendar.
+- Every real run (scheduled, `planner plan`, the re-plan after `done`/`skip`) goes in `run_log` with its outcome.
+  `planner status` shows the last scheduled run; `planner health` (the Docker healthcheck) fails when no run has
+  succeeded for 26 hours.
+- A fresh database connection per check (a day-old one would have timed out); `SIGTERM` exits at once, and an
+  interrupted run is simply redone by the next one.
 
 ### Two folders
 
@@ -346,7 +362,8 @@ no host cron.
 | `fitting.py` | Who does what, when, in the free time (pure) | — |
 | `calendars.py` | Read and classify the family calendars; read and write the planner's events in the Chores calendar | Nextcloud |
 | `plans.py` | The saved plan: freeze/unknown rules, reconcile, event UIDs/titles/iCalendar, calendar diff (pure) | — |
-| `jobs.py` | `run_plan` (re-plan from now, save, sync), `report` (done/skip), `dry_run`; later the scheduler | the above |
+| `jobs.py` | `run_plan` (re-plan from now, save, sync), `report` (done/skip), `dry_run` | the above |
+| `scheduler.py` | When the daily re-plan is due, when to wake up, health (pure); `planner serve` runs the loop | — |
 | `weather.py`, `brief.py`, `notify.py` | Phases 4–5 | external APIs |
 
 Only `db.py` contains SQL and only `calendars.py` speaks CalDAV; `scoring.py` and `fitting.py` take plain data and
@@ -384,7 +401,8 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 | 1 | Scoring + fitting; `planner plan --dry-run` prints a plan | Plans for sample weekends look sensible; unit tests on scoring/edge cases |
 | 2 | CalDAV read of family calendars; capacity + travel look-ahead | A real travel week produces front-loading and catch-up |
 | 3 | CalDAV write of events; `done`/`skip` CLI | Telling Claude Code "I mowed the lawn" changes next week's plan |
-| 4 | App Docker image in the compose stack, internal scheduler, notifier, Claude brief | Brief arrives Thursday evening without manual steps |
+| 4a | App container always on, internal scheduler (daily 20:00 re-plan), run log, healthcheck | The plan and ❔ marks update every evening without manual steps |
+| 4b | Notifier, Claude brief (postponed) | Brief arrives Thursday evening without manual steps |
 | 5 | Weather integration, natural-language catalog edits, polish | — |
 
 ## 11. Testing

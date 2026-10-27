@@ -7,7 +7,7 @@
 
 import json
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from pathlib import Path
 
@@ -266,3 +266,70 @@ def test_done_by_someone_else_updates_the_event(conn, monkeypatch):
                 if r.people == ["nicolas"])
     jobs.report(conn, _cal(), mine.chore_id, "done", mine.start.date(), ["anna"])
     assert fake.events[mine.uid].title.startswith("✅ ") and fake.events[mine.uid].title.endswith("(Anna)")
+
+
+# --- phase 4a: run log, scheduler, health -----------------------------------------------
+
+def test_run_log_round_trip(conn):
+    from planner.models import RunRecord
+    assert db.last_run(conn) is None
+    db.log_run(conn, RunRecord(datetime(2026, 10, 26, 20, 0), datetime(2026, 10, 26, 20, 0, 4), "schedule", "ok",
+                               "1 added"))
+    db.log_run(conn, RunRecord(datetime(2026, 10, 27, 9, 0), datetime(2026, 10, 27, 9, 0, 2), "report", "error",
+                               "calendar down"))
+    assert db.last_run(conn).trigger == "report"
+    assert db.last_run(conn, trigger="schedule", outcome="ok").message == "1 added"
+    assert db.last_run(conn, outcome="error").message == "calendar down"
+    assert db.last_run(conn, trigger="manual") is None
+
+
+def test_real_runs_are_logged_even_when_they_fail(conn, monkeypatch):
+    from planner import cli
+    monkeypatch.setattr(cli, "_run_plan", lambda c, planning, quiet: "2 added")
+    cli.run_plan(conn, _planning(), trigger="manual")
+    assert (db.last_run(conn).outcome, db.last_run(conn).message) == ("ok", "2 added")
+
+    def boom(c, planning, quiet):
+        raise ValueError("Couldn't read the calendars")
+    monkeypatch.setattr(cli, "_run_plan", boom)
+    with pytest.raises(ValueError):
+        cli.run_plan(conn, _planning(), trigger="schedule")
+    last = db.last_run(conn)
+    assert (last.trigger, last.outcome, last.message) == ("schedule", "error", "Couldn't read the calendars")
+
+
+def test_health(conn, capsys):
+    from planner import cli
+    from planner.models import RunRecord
+    assert cli.cmd_health(conn, None, None) == 1
+    now = datetime.now()
+    db.log_run(conn, RunRecord(now - timedelta(hours=1), now, "schedule", "ok", "ok"))
+    assert cli.cmd_health(conn, None, None) == 0
+    assert "ok: last successful run" in capsys.readouterr().out
+
+
+def test_serve_runs_when_due_then_sleeps_until_the_next_time(conn, settings, monkeypatch):
+    from planner import cli
+    runs = []
+    monkeypatch.setattr(cli, "load_plan_times", lambda: (datetime.now().time().replace(microsecond=0),))
+    monkeypatch.setattr(cli, "load_planning_settings", _planning)
+    monkeypatch.setattr(cli, "load_calendar_settings", lambda: None)
+    monkeypatch.setattr(cli.signal, "signal", lambda *a: None)
+    monkeypatch.setattr(cli, "_run_plan", lambda c, planning, quiet: runs.append(1) or "done")
+
+    class Stop(Exception):
+        pass
+
+    wakes = []
+
+    def fake_sleep(moment):
+        wakes.append(moment)
+        if len(wakes) == 2:
+            raise Stop
+
+    monkeypatch.setattr(cli, "sleep_until", fake_sleep)
+    with pytest.raises(Stop):
+        cli.cmd_serve(None, None, settings)
+    assert runs == [1]                                   # due on the first check, not again on the second
+    assert db.last_run(conn, trigger="schedule", outcome="ok") is not None
+    assert all(w > datetime.now() + timedelta(hours=23) for w in wakes)   # tomorrow, same time

@@ -74,10 +74,12 @@ The running stack lives in the deployment folder (`<deploy-dir>/chore-aisist`, t
 docker build -t chore-aisist:0.1.0 .                      # from this repo, on master after the merge
 cd <deploy-dir>/chore-aisist
 docker compose run --rm chore-aisist migrate              # if there's a new migration (back up the database first)
-docker compose run --rm chore-aisist plan --dry-run       # check
+docker compose up -d                                      # recreate the scheduler container on the new image
+docker compose exec chore-aisist planner plan --dry-run   # check
 ```
 
 ## Careful: these touch the family's phones
 
 `planner plan` (without `--dry-run`), `planner done` and `planner skip` write to the shared Chores calendar,
-and `done`/`skip` re-plan from now. Use `--dry-run` while developing, and **ask the owner before any real run**.
+and `done`/`skip` re-plan from now. So does `planner serve`, every day at `PLAN_TIMES` (and once on start if a run
+was missed): don't run it from the dev checkout against the real database. Use `--dry-run` while developing, and **ask the owner before any real run**.
