@@ -33,7 +33,7 @@ services:
   # or, e.g. for migrate before the first start, a one-off container:
   #   docker compose run --rm chore-aisist migrate
   chore-aisist:
-    image: chore-aisist:0.1.0     # build from this repo: docker build -t chore-aisist:0.1.0 .
+    image: chore-aisist:0.1.0     # build from this repo: docker build --build-arg APP_UID=$(id -u) -t chore-aisist:0.1.0 .
     container_name: chore-aisist
     command: ["serve"]
     restart: unless-stopped
@@ -71,9 +71,13 @@ services:
       CHORES_CALENDAR_URI: ${CHORES_CALENDAR_URI:-chores}
       REMINDER_MINUTES: ${REMINDER_MINUTES:-30}
       PLAN_TIMES: ${PLAN_TIMES:-20:00}
+      BACKUP_DIR: /backups                                      # a dump before every scheduled run
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
     extra_hosts:
       # The server may not resolve Nextcloud's name, and its certificate only covers the name, not the IP.
       # NEXTCLOUD_HOST must match the host in CALDAV_URL.
       - "${NEXTCLOUD_HOST:-nextcloud.local}:${NEXTCLOUD_IP:-127.0.0.1}"
     volumes:
       - ${HOMELAB_CA_CERT:-/dev/null}:/certs/homelab-ca.crt:ro   # CA that signed Nextcloud's certificate
+      # Backups: preferably on another disk than ./db, writable by the image's user (APP_UID at build, default 1000)
+      - ${BACKUP_FOLDER:-./backups}:/backups

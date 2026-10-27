@@ -72,6 +72,24 @@ def load_planning_settings() -> PlanningSettings:
     )
 
 
+@dataclass(frozen=True)
+class BackupSettings:
+    folder: str                                # where dumps go (BACKUP_DIR); in the container, a mounted folder
+    keep_days: int = 30                        # older dumps are deleted (BACKUP_KEEP_DAYS); the newest is always kept
+
+
+def load_backup_settings() -> BackupSettings | None:
+    """Backup settings, or None when BACKUP_DIR isn't set (no backups)."""
+    load_dotenv()
+    folder = os.environ.get("BACKUP_DIR")
+    if not folder:
+        return None
+    keep = int(os.environ.get("BACKUP_KEEP_DAYS", "30"))
+    if keep < 1:
+        raise ValueError(f"BACKUP_KEEP_DAYS must be 1 or more, got {keep}")
+    return BackupSettings(folder, keep)
+
+
 def load_plan_times() -> tuple[time, ...]:
     """Times of day for the scheduled re-plan (PLAN_TIMES, default 20:00), sorted."""
     load_dotenv()

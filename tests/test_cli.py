@@ -77,3 +77,29 @@ def test_serve_refuses_to_start_without_calendars(monkeypatch):
     monkeypatch.setattr(cli, "load_calendar_settings", lambda: None)
     with pytest.raises(ValueError, match="CALDAV_URL not set"):
         cli.cmd_serve(None, None, None)
+
+
+def test_scheduled_backup_once_per_scheduled_time_and_never_fatal(tmp_path, monkeypatch, capsys):
+    from datetime import datetime, time
+
+    from planner import cli
+    from planner.backup import backup_name
+    from planner.config import BackupSettings
+    made = []
+    monkeypatch.setattr(cli.backup, "dump", lambda s, folder, now, keep: made.append(now) or folder / backup_name(now))
+    backups, times = BackupSettings(str(tmp_path), 30), (time(20, 0),)
+    now = datetime(2026, 10, 27, 20, 0, 4)
+
+    (tmp_path / backup_name(datetime(2026, 10, 26, 20, 0))).write_bytes(b"")          # yesterday's
+    cli.scheduled_backup(None, backups, now, times)
+    assert made == [now]
+
+    (tmp_path / backup_name(now)).write_bytes(b"")                                    # a retry at 20:15
+    cli.scheduled_backup(None, backups, datetime(2026, 10, 27, 20, 15), times)
+    assert made == [now]
+
+    def broken(*args):
+        raise ValueError("disk full")
+    monkeypatch.setattr(cli.backup, "dump", broken)
+    cli.scheduled_backup(None, backups, datetime(2026, 10, 28, 20, 0), times)          # logged, not raised
+    assert "Backup failed: ValueError: disk full" in capsys.readouterr().err

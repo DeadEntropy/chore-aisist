@@ -322,6 +322,17 @@ no host cron. Phase 4a (`scheduler.py`, `planner serve`):
   sync, so a report made while the 20:00 run is busy waits for it instead of being overwritten with ❔.
 - `serve` refuses to start without the calendar settings, so a misconfiguration shows at once as a restarting
   container rather than 26 hours later.
+- **Safety** (protecting the data):
+  - **Backups:** before every scheduled run (once per scheduled time, not on retries) a gzipped
+    `mariadb-dump --single-transaction` goes to `BACKUP_DIR` (in the container, a mounted host folder on another disk
+    than `./db`), and dumps older than `BACKUP_KEEP_DAYS` (30) are deleted, never the newest. `planner backup` makes
+    one on demand (before `migrate`). A failed backup is logged but doesn't stop the re-plan, and `planner health`
+    turns unhealthy when there's no backup from the last 26 hours. The image carries `mariadb-client` for this, and
+    its user's uid is a build argument (`APP_UID`, default 1000) so it can write to the host folder.
+  - **Empty database:** planning (scheduled or manual) refuses to run on a database with no people or no chores, and
+    `serve` refuses to start: that's a wrong or freshly created database (e.g. the data folder wasn't mounted when
+    the container started), and planning on it would empty the Chores calendar, which mirrors the `planned` table.
+  - **Tests:** the database tests drop every table, so they refuse to run unless the database name ends in `_test`.
 
 ### Two folders
 
@@ -371,6 +382,7 @@ no host cron. Phase 4a (`scheduler.py`, `planner serve`):
 | `plans.py` | The saved plan: freeze/unknown rules, reconcile, event UIDs/titles/iCalendar, calendar diff (pure) | — |
 | `jobs.py` | `run_plan` (re-plan from now, save, sync), `report` (done/skip), `dry_run` | the above |
 | `scheduler.py` | When the daily re-plan is due, when to wake up, health (pure); `planner serve` runs the loop | — |
+| `backup.py` | Database dumps (`mariadb-dump`) and pruning old ones | MariaDB, the backup folder |
 | `weather.py`, `brief.py`, `notify.py` | Phases 4–5 | external APIs |
 
 Only `db.py` contains SQL and only `calendars.py` speaks CalDAV; `scoring.py` and `fitting.py` take plain data and

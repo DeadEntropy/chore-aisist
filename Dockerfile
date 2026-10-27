@@ -16,10 +16,16 @@ RUN uv sync --frozen --no-dev --no-install-project --no-build
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable --no-build
 
-# --- runtime stage: just Python and the environment ---------------------------
+# --- runtime stage: Python, the environment and mariadb-dump (for backups) -----
 FROM python:3.12-slim
 
-RUN useradd --system --no-create-home app
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends mariadb-client \
+ && rm -rf /var/lib/apt/lists/*
+
+# The user that writes backups: give it the uid that owns the host's backup folder (default 1000).
+ARG APP_UID=1000
+RUN useradd --system --no-create-home --uid "$APP_UID" app
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 

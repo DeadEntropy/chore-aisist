@@ -62,6 +62,8 @@ docker rm -f chore-test-db
 
 ## Public repository: no private details
 
+The database tests drop every table: they refuse to run unless `TEST_DB_NAME` ends in `_test`. Never weaken that.
+
 Never commit internal IPs, hostnames other than `nextcloud.local`, file paths on the server, or Nextcloud user
 names other than `ChoreAisist`. Use placeholders (`<server-ip>`, `<deploy-dir>`, `<owner-user>`) in docs and put
 real values in `.env` (gitignored). Check before committing:
@@ -73,9 +75,10 @@ grep -rnE '192\.168|/mnt/' deploy src tests .env.example *.md
 
 The running stack lives in the deployment folder (`<deploy-dir>/chore-aisist`, template in `deploy/`):
 ```bash
-docker build -t chore-aisist:0.1.0 .                      # from this repo, on master after the merge
+docker build --build-arg APP_UID=$(id -u) -t chore-aisist:0.1.0 .   # from this repo, on master after the merge
 cd <deploy-dir>/chore-aisist
-docker compose run --rm chore-aisist migrate              # if there's a new migration (back up the database first)
+docker compose exec chore-aisist planner backup           # before a migration
+docker compose run --rm chore-aisist migrate              # if there's a new migration
 docker compose up -d                                      # recreate the scheduler container on the new image
 docker compose exec chore-aisist planner plan --dry-run   # check
 ```

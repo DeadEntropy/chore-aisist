@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pymysql
 
-from planner import calendars, db, jobs, scheduler, seed
-from planner.config import load_calendar_settings, load_plan_times, load_planning_settings, load_settings
+from planner import backup, calendars, db, jobs, scheduler, seed
+from planner.config import (load_backup_settings, load_calendar_settings, load_plan_times, load_planning_settings,
+                            load_settings)
 from planner.models import Chore, RunRecord
 
 NULLS = {"", "none", "null"}
@@ -89,8 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("serve", help="run the scheduler: re-plan every day at PLAN_TIMES (the container's command)")
     p.set_defaults(func=cmd_serve, own_connection=True)
 
-    p = sub.add_parser("health", help="exit 0 if a planning run succeeded recently (Docker healthcheck)")
+    p = sub.add_parser("health", help="exit 0 if a planning run (and a backup) succeeded recently (Docker healthcheck)")
     p.set_defaults(func=cmd_health)
+
+    p = sub.add_parser("backup", help="dump the database to BACKUP_DIR now (also done before every scheduled run)")
+    p.set_defaults(func=cmd_backup, own_connection=True)
     return parser
 
 
@@ -229,6 +233,7 @@ def _log_run(conn, run: RunRecord) -> None:
 
 
 def _run_plan(conn, planning, quiet: bool) -> str:
+    check_catalog(conn)
     cal = load_calendar_settings()
     if cal is None:
         raise ValueError("Writing the plan needs the calendars (CALDAV_URL not set); use --dry-run to only print it")
@@ -314,14 +319,22 @@ def cmd_serve(conn, args, settings):
     planning = load_planning_settings()
     if load_calendar_settings() is None:           # fail at start, not at 20:00, if the settings are wrong
         raise ValueError("The scheduler needs the calendars to write the plan (CALDAV_URL not set)")
+    backups = load_backup_settings()
+    with db.connect(settings) as c:                # refuse to start on an empty (wrong or freshly created) database
+        check_catalog(c)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))      # `docker stop`: exit at once (we're PID 1)
-    log(f"Scheduler started: re-plans every day at {', '.join(t.strftime('%H:%M') for t in times)}")
+    log(f"Scheduler started: re-plans every day at {', '.join(t.strftime('%H:%M') for t in times)}; "
+        + (f"backs up to {backups.folder} first (kept {backups.keep_days} days)" if backups
+           else "no backups (BACKUP_DIR not set)"))
     while True:
         failed = False
         try:
             with db.connect(settings) as c:           # a fresh connection per check: a day-old one would time out
                 last = db.last_run(c, trigger="schedule", outcome="ok")
-                if scheduler.is_due(datetime.now(), times, last.started_at if last else None):
+                now = datetime.now()
+                if scheduler.is_due(now, times, last.started_at if last else None):
+                    if backups:
+                        scheduled_backup(settings, backups, now, times)
                     log("Scheduled re-plan")
                     run_plan(c, planning, quiet=True, trigger="schedule")
         except Exception as exc:                      # log and carry on: the next run starts from the saved plan
@@ -332,15 +345,53 @@ def cmd_serve(conn, args, settings):
         sleep_until(wake)
 
 
+def scheduled_backup(settings, backups, now: datetime, times) -> None:
+    """Back up before a scheduled run, unless a backup was already made since the last scheduled time (a retried
+    run doesn't back up again). A failed backup is logged; the re-plan still runs (it never deletes chores or history)."""
+    folder = Path(backups.folder)
+    made = backup.latest(folder)
+    if made is not None and made >= scheduler.latest_scheduled(now, times).replace(second=0):
+        return
+    try:
+        log(f"Backed up to {backup.dump(settings, folder, now, backups.keep_days)}")
+    except Exception as exc:
+        log(f"Backup failed: {type(exc).__name__}: {exc}", error=True)
+
+
+def cmd_backup(conn, args, settings):
+    backups = load_backup_settings()
+    if backups is None:
+        raise ValueError("BACKUP_DIR is not set")
+    print(f"Backed up to {backup.dump(settings, Path(backups.folder), datetime.now(), backups.keep_days)}")
+
+
 def cmd_health(conn, args, settings):
+    now = datetime.now()
+    problems = []
     last = db.last_run(conn, outcome="ok")
-    if scheduler.is_healthy(datetime.now(), last.started_at if last else None):
-        print(f"ok: last successful run {last.started_at:%a %d %b %H:%M} ({last.trigger})")
-        return 0
-    failed = db.last_run(conn)
-    print("unhealthy: no successful run in the last 26 hours"
-          + (f"; last attempt {failed.started_at:%a %d %b %H:%M}: {failed.message}" if failed else ""))
-    return 1
+    if not scheduler.is_healthy(now, last.started_at if last else None):
+        failed = db.last_run(conn)
+        problems.append("no successful run in the last 26 hours"
+                        + (f" (last attempt {failed.started_at:%a %d %b %H:%M}: {failed.message})" if failed else ""))
+    backups = load_backup_settings()
+    made = backup.latest(Path(backups.folder)) if backups else None
+    if backups and not scheduler.is_healthy(now, made):
+        problems.append(f"no backup in {backups.folder} in the last 26 hours")
+    if problems:
+        print("unhealthy: " + "; ".join(problems))
+        return 1
+    print(f"ok: last successful run {last.started_at:%a %d %b %H:%M} ({last.trigger})"
+          + (f", last backup {made:%a %d %b %H:%M}" if made else ""))
+    return 0
+
+
+def check_catalog(conn) -> None:
+    """Stop if the database has no people or no chores: it's the wrong or a freshly created database (e.g. the
+    data folder wasn't mounted), and planning on it would empty the Chores calendar."""
+    missing = [what for what, rows in (("people", db.get_people(conn)), ("chores", db.get_chores(conn))) if not rows]
+    if missing:
+        raise ValueError(f"The database has no {' and no '.join(missing)}: is the right data folder mounted? "
+                         "Refusing to plan (it would empty the Chores calendar).")
 
 
 def sleep_until(moment: datetime) -> None:

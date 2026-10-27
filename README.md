@@ -23,6 +23,7 @@ src/planner/
   plans.py      the saved plan: freeze/unknown rules, re-planning, Chores calendar events
   jobs.py       ties it together: plan runs, done/skip, calendar sync
   scheduler.py  when the daily re-plan is due, retries, health
+  backup.py     database dumps before every scheduled run, pruning
   cli.py        the `planner` command
   migrations/   schema changes, applied in name order by `planner migrate`
 tests/          pytest; database tests need a throwaway MariaDB (see below)
@@ -87,7 +88,8 @@ planner done <chore> [--date D] [--by nicolas,anna]   record a chore as done (�
 planner skip <chore> [--date D]          record a chore as skipped (⏭)
 planner status                           last/next 7 days with ✅ ⏭ ❔ 🧹, and what's overdue
 planner serve                            the scheduler: re-plan every day at PLAN_TIMES (the container's command)
-planner health                           exit 0 if a run succeeded in the last 26 hours (Docker healthcheck)
+planner health                           exit 0 if a run and a backup succeeded in the last 26 hours (healthcheck)
+planner backup                           dump the database to BACKUP_DIR now (e.g. before migrate)
 planner plan --dry-run [--date YYYY-MM-DD] [--weeks N] [--no-calendar]
                                          print the plan for the next 7 days (and the next N-1
                                          periods, assuming planned chores get done), around
@@ -102,7 +104,7 @@ The image is built from this repo; the running stack lives in `<deploy-dir>/chor
 (template in `deploy/`).
 
 ```bash
-docker build -t chore-aisist:0.1.0 .
+docker build --build-arg APP_UID=$(id -u) -t chore-aisist:0.1.0 .   # uid that owns the backup folder
 cd <deploy-dir>/chore-aisist
 docker compose up -d chore-aisist-db
 docker compose run --rm chore-aisist migrate
@@ -115,8 +117,12 @@ The database is the catalog: add and edit chores with `planner chore add/set`. T
 **fresh** database must get its people and chores from a JSON file (same format as `tests/fixtures/chores.json`)
 before the scheduler starts: its runs need the people named in `BUSY_CALENDARS`. After changing `.env`, run
 `docker compose up -d` so the running container picks up the new settings.
-`planner export` writes the catalog out as JSON for a readable snapshot; backups are database dumps (they also keep
-the completion history and the saved plan).
+`planner export` writes the catalog out as JSON for a readable snapshot. Backups are database dumps (they also keep
+the completion history and the saved plan): the scheduler writes one to `BACKUP_FOLDER` before every scheduled run
+and keeps `BACKUP_KEEP_DAYS` days of them. To restore one:
+```bash
+zcat <backup-folder>/chores-YYYYMMDD-HHMM.sql.gz | docker compose exec -T chore-aisist-db sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" chores'
+```
 
 | Container | Port | Notes |
 |---|---|---|
