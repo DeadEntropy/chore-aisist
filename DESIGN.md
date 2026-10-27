@@ -136,7 +136,7 @@ CREATE TABLE planned (
   people      VARCHAR(64) NOT NULL,                     -- 'nicolas' or 'nicolas,anna'
   start_at    DATETIME NOT NULL,                        -- local time
   end_at      DATETIME NOT NULL,
-  caldav_uid  VARCHAR(255) NOT NULL UNIQUE,             -- chore-{chore_id}-{date}@chore-aisist
+  caldav_uid  VARCHAR(255) NOT NULL UNIQUE,             -- chore-{chore_id}-{date}-{random}@chore-aisist
   status      VARCHAR(16) NOT NULL DEFAULT 'open',      -- open | done | skipped | unknown
   updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
@@ -262,8 +262,12 @@ All access is as the app's Nextcloud user (`<app-user>`) with an app password (s
   in the planning horizon (the planned weekends + 6 weeks of look-ahead), with recurring events expanded. Times are
   converted to local time (`PLANNER_TIMEZONE`). See §6.3 for what blocks whom.
 - **Write** (phase 3, `plans.py` + `calendars.py`): one timed VEVENT per planned chore in the Chores calendar, title
-  `🧹 Mow the lawn (Nicolas)` (`✅` done, `⏭` skipped, `❔` unknown), a DISPLAY alarm `REMINDER_MINUTES` before
-  (30; 0 = none), and a deterministic UID `chore-{chore_id}-{date}@chore-aisist`. Events only — no VTODOs.
+  `🧹 Mow the lawn (Nicolas)` (`❔` once its time passed unreported), a DISPLAY alarm `REMINDER_MINUTES` before
+  (30; 0 = none), and a UID `chore-{chore_id}-{date}-{random}@chore-aisist`. The random part is new for every
+  item: Nextcloud keeps a deleted event in its trash under the same name, so deleting a re-created event with a
+  reused name collides there (`403 Forbidden`). Events only — no VTODOs.
+- **Only what's still to do is shown:** `open` (🧹) and `unknown` (❔) items. A done or skipped item is taken off the
+  calendar when it's reported; its history stays in the database (`completion`, and the item's status in `planned`).
 - **Single writer, calendar mirrors the database**: the `planned` table is the source of truth; after each change the
   planner makes its events in the Chores calendar (last 14 days → next 7) match it: create, update, delete. Only
   events with a `@chore-aisist` UID are ever deleted. Nicolas and Anna have read-only access.
@@ -292,9 +296,10 @@ A `/chores` Claude Code command file on the home server (like the existing `/cal
 vocabulary for Claude Code.
 
 - `done` inserts a `completion` row per person (`outcome = done`, `source = claude`; people default to whoever the
-  item was planned for, `--by` overrides), marks the planned item closest to the date `done`, and updates its event
-  (`✅`). A chore that wasn't planned can still be reported done (with `--by` if its assignee is `either`).
-- `skip` records `outcome = skipped` (does not reset the interval) and marks the planned item `skipped` (`⏭`).
+  item was planned for, `--by` overrides), marks the planned item closest to the date `done`, and takes its event
+  off the calendar. A chore that wasn't planned can still be reported done (with `--by` if its assignee is `either`).
+- `skip` records `outcome = skipped` (does not reset the interval) and marks the planned item `skipped` (its event
+  leaves the calendar too).
 - Planned chores whose time passed without a report become `unknown` (`❔`) at the next run and rescore.
 - Catalog edits go through the CLI too ("hedges take closer to 3 hours" → `planner chore set trim-hedge-mendel
   duration_h=3`; "add: clean the gutters every 6 months" → `planner chore add …`), then `planner plan` refreshes
@@ -405,8 +410,12 @@ container. Revisit once the planner is live.
 ### Idempotency
 
 Every run is idempotent: with nothing changed (no new events, no reports, same time of day), a re-plan keeps the
-same items with the same UIDs and writes nothing to the calendar. Items are keyed by chore and day, so moving a chore
-within a day updates its event in place.
+same items with the same UIDs and writes nothing to the calendar. Items are matched by chore and day, so moving a
+chore within a day updates its event in place; only a new item gets a new UID.
+
+Every chore starts on a quarter hour (`fitting.START_STEP_MINUTES`), including re-planning "from now". Items in progress (started, not
+reported, not ended) keep their people's time taken and count as placed for the chores that need them, so a series
+of reports minutes apart never stacks chores on top of each other.
 
 ## 9. The weekly brief
 

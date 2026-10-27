@@ -57,6 +57,7 @@ def score_chores(
     today: date,
     next_available: date | None = None,
     until: date | None = None,
+    in_progress: set[str] = frozenset(),
 ) -> tuple[list[Scored], list[tuple[Chore, str]]]:
     """Return (eligible chores sorted by score, highest first; excluded chores with the reason).
 
@@ -71,12 +72,16 @@ def score_chores(
     A chore with `not_before` after `until` (the last day being planned; default `today`) is held back and listed
     as excluded; fitting keeps it off the days before that date. A one-off waits from `not_before`, not from when it
     was added, so it doesn't arrive already urgent.
+
+    `in_progress` are chores whose planned item has already started: they aren't placed again (but stay in `chores`
+    so their type still counts for the needs rules), and a chore that needs one of them counts as waiting for it;
+    fitting places it after that item ends.
     """
     eligible: list[Scored] = []
     excluded: list[tuple[Chore, str]] = []
     types = {c.id: c.type for c in chores}
     for chore in chores:
-        if not chore.active:
+        if not chore.active or chore.id in in_progress:
             continue
         if chore.type == "one_off" and chore.id in last_done:
             continue                                         # finished for good
@@ -111,7 +116,7 @@ def score_chores(
 
     # Drop chores waiting for something that can't be planned now (repeat: dropping one can strand another).
     while True:
-        ids = {s.chore.id for s in eligible}
+        ids = {s.chore.id for s in eligible} | set(in_progress)
         stuck = [s for s in eligible if any(n not in ids for n in s.waits_for)]
         if not stuck:
             break
@@ -126,7 +131,7 @@ def score_chores(
         changed = False
         for s in eligible:
             for n in s.waits_for:
-                if by_id[n].score < s.score:
+                if n in by_id and by_id[n].score < s.score:
                     by_id[n].score = s.score
                     changed = True
 
@@ -139,7 +144,8 @@ def score_chores(
         if s.chore.id not in seen:
             seen.add(s.chore.id)
             for n in s.waits_for:
-                emit(by_id[n])
+                if n in by_id:                    # not when it's already in progress
+                    emit(by_id[n])
             ordered.append(s)
 
     for s in sorted(eligible, key=lambda s: (-s.score, -s.chore.priority, s.chore.id)):

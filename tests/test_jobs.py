@@ -145,3 +145,70 @@ def test_an_unreadable_backup_folder_doesnt_stop_the_run(tmp_path, monkeypatch):
     jobs.backup_before_run(None, BackupSettings(str(tmp_path), 30), datetime(2026, 10, 27, 20, 0), (time(20, 0),),
                            lambda message, error=False: lines.append((message, error)))
     assert lines and lines[0][1] and "Backup failed: PermissionError" in lines[0][0]
+
+
+# --- re-planning "from now": quarter hours, in-progress items ----------------------------
+
+def _in_progress(chore, start, end, who="nicolas"):
+    from planner.models import PlannedRecord
+    return PlannedRecord(chore, [who], start, end, f"chore-{chore}-x@chore-aisist")
+
+
+def test_planning_from_now_starts_at_the_next_quarter_hour():
+    now = datetime(2026, 10, 31, 10, 17)                  # Saturday 10:17
+    results = plan_periods([one_off("fix")], PERSONS, {}, now.date(), 1, [], 30, PLANNING, not_before=now)
+    assert results[0].plan.items[0].start == datetime(2026, 10, 31, 10, 30)
+
+
+def test_an_item_in_progress_keeps_its_time_taken():
+    now = datetime(2026, 10, 31, 10, 17)
+    busy = _in_progress("trim", datetime(2026, 10, 31, 9), datetime(2026, 10, 31, 12))
+    results = plan_periods([one_off("fix")], PERSONS, {}, now.date(), 1, [], 30, PLANNING, not_before=now,
+                           in_progress=[busy])
+    assert results[0].plan.items[0].start == datetime(2026, 10, 31, 12)          # after the trim, not on top of it
+
+
+def test_a_job_can_follow_a_need_in_progress():
+    now = datetime(2026, 10, 31, 10, 17)
+    order = _in_progress("order", datetime(2026, 10, 31, 10), datetime(2026, 10, 31, 11), who="anna")
+    job = Chore(id="mulch", name="mulch", category="garden", type="one_off", duration_h=1, priority=3,
+                assignee="nicolas", created_on=SAT, needs=["order"])
+    results = plan_periods([job], PERSONS, {}, now.date(), 1, [], 30, PLANNING, not_before=now, in_progress=[order])
+    item, = results[0].plan.items
+    assert item.start == datetime(2026, 10, 31, 11)                              # waits for the order to end
+    assert results[0].excluded == []
+
+
+def test_an_in_progress_chore_comes_back_in_later_periods_of_a_preview():
+    now = datetime(2026, 10, 31, 10, 0)
+    weekly = recurring("water", 7, 7, 7)                  # due every 7 days
+    doing = _in_progress("water", datetime(2026, 10, 31, 9), datetime(2026, 10, 31, 11))
+    results = plan_periods([weekly], PERSONS, {}, now.date(), 2, [], 30, PLANNING, not_before=now,
+                           in_progress=[doing])
+    assert results[0].plan.items == []                    # in progress this period: not planned again
+    assert [i.start.date() for i in results[1].plan.items] == [date(2026, 11, 7)]   # due again a week later
+
+
+def test_a_preview_starting_later_keeps_dependents_of_an_in_progress_chore():
+    now = datetime(2026, 10, 31, 10, 0)
+    order = _in_progress("order", datetime(2026, 10, 31, 9), datetime(2026, 10, 31, 11))
+    job = Chore(id="mulch", name="mulch", category="garden", type="one_off", duration_h=1, priority=3,
+                assignee="nicolas", created_on=SAT, needs=["order"])
+    order_chore = one_off("order")
+    results = plan_periods([job, order_chore], PERSONS, {}, date(2026, 11, 6), 1, [], 30, PLANNING,
+                           in_progress=[order])                  # preview from next Friday
+    assert [i.chore.id for i in results[0].plan.items] == ["mulch"]   # the order counts as done by then
+
+
+def test_an_in_progress_need_still_follows_the_recurring_needs_rule():
+    # mulch was last done after the last trim, so the trim must be done again first: the one in progress counts,
+    # and the mulch must wait for it to end (not start before it, on the strength of the old trim).
+    now = datetime(2026, 10, 31, 10, 0)
+    trim = recurring("trim", 7, 10, 14)
+    mulch = recurring("mulch", 7, 10, 14, needs=["trim"])
+    doing = _in_progress("trim", datetime(2026, 10, 31, 10), datetime(2026, 10, 31, 12))
+    last = {"trim": SAT - timedelta(days=30), "mulch": SAT - timedelta(days=20)}
+    results = plan_periods([trim, mulch], PERSONS, last, now.date(), 1, [], 30, PLANNING, not_before=now,
+                           in_progress=[doing])
+    item, = results[0].plan.items
+    assert item.chore.id == "mulch" and item.start >= datetime(2026, 10, 31, 12)

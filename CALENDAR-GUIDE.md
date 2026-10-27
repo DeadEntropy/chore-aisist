@@ -153,29 +153,33 @@ remove the share or subscription in Nextcloud.
 ## 4. The Chores calendar (what the planner writes)
 
 `planner plan` saves the plan for the next 7 days and shows it in the **Chores** calendar, which you and Anna see
-read-only. Each chore is a timed event with a reminder 30 minutes before (`REMINDER_MINUTES`):
+read-only. It shows only what's still to do. Each chore is a timed event, starting on a quarter hour, with a
+reminder 30 minutes before (`REMINDER_MINUTES`):
 
 | Title | Meaning |
 |---|---|
 | `🧹 Mow the lawn (Nicolas)` | planned |
-| `✅ Mow the lawn (Nicolas)` | done (reported) |
-| `⏭ Mow the lawn (Nicolas)` | skipped (reported) |
 | `❔ Mow the lawn (Nicolas)` | its time passed and nobody reported it |
+
+A chore reported done or skipped **leaves the calendar** at once. The history stays in the planner's database:
+`planner status`, or ask Claude Code ("when did we last mow?").
 
 How re-planning works. The planner re-plans **from the current moment** to the end of a 7-day window: every evening
 at 20:00 (`PLAN_TIMES`), and **right after every `done` / `skip`**.
-- Chores that already started are fixed: nothing in the past is moved or deleted.
+- Chores that already started are fixed: nothing in the past is moved. A chore in progress keeps its time, so
+  nothing new is planned on top of it, and a chore that needs it comes after it.
+- Planning "from now" starts at the next quarter hour (a report at 10:17 plans from 10:30).
 - Chores still planned (🧹) from now on are re-planned: kept if nothing changed, moved if your calendar changed,
   removed if they no longer fit, and new ones are added. Chores go in the **earliest** free slot, so tomorrow's plan
   doesn't change just because a new day appears at the end of the window.
 - A planned chore whose time has passed without a report becomes ❔ and goes back into the pool, so it can be
-  planned again (e.g. on the next day). If you did it, report it, even later: it turns ✅, and the re-plan that
-  follows removes any copy that was planned again.
-- ✅ and ⏭ are never changed: they're the history.
+  planned again (e.g. on the next day). If you did it, report it, even later: it leaves the calendar, and the
+  re-plan that follows removes any copy that was planned again.
+- Reported chores (done or skipped) are never changed in the database: they're the history.
 
 Example: on Saturday evening nothing has been reported yet, so the 20:00 run marks Saturday's chores ❔ and plans some
-of them again on Sunday. On Sunday morning you tell Claude Code "I did all of Saturday's chores": they turn ✅ and
-Sunday goes back to its original plan.
+of them again on Sunday. On Sunday morning you tell Claude Code "I did all of Saturday's chores": they leave the
+calendar and Sunday goes back to its original plan.
 
 **Reporting** is done through Claude Code (or the commands directly):
 ```bash

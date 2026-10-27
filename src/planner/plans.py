@@ -6,10 +6,15 @@ Rules (each run plans from `now`: the evening run, and a re-plan right after eve
   - A frozen item still `open` that hasn't ended yet (in progress) stays open, and its chore isn't planned again.
 - Items starting from `now` on that are still `open` are **re-planned**: kept if unchanged, moved if their time
   changed, removed if the chore dropped out of the plan, and new ones are added.
-- `done` (✅) and `skipped` (⏭) items are never touched: they stay as history.
-The Chores calendar mirrors the `planned` table: `calendar_diff` makes the calendar match the records.
+- `done` (✅) and `skipped` (⏭) items are never touched: they stay as history in the database.
+The Chores calendar shows what's still to do: the `open` (🧹) and `unknown` (❔) items of the `planned` table.
+Done and skipped items are taken off it (`desired_events`); the history stays in the database.
+
+Each item has its own event UID: chore, day and a random part. Nextcloud keeps a deleted event in its trash under
+the same name for a while, so re-creating and deleting an event with a reused name would collide there.
 """
 
+import secrets
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -20,10 +25,12 @@ from planner.models import PlannedItem, PlannedRecord
 
 UID_DOMAIN = "chore-aisist"                     # every event the planner writes has a UID ending in @chore-aisist
 STATUS_MARK = {"open": "🧹", "done": "✅", "skipped": "⏭", "unknown": "❔"}
+SHOWN = ("open", "unknown")                     # statuses shown in the Chores calendar
 
 
-def event_uid(chore_id: str, day: date) -> str:
-    return f"chore-{chore_id}-{day.isoformat()}@{UID_DOMAIN}"
+def event_uid(chore_id: str, day: date, token: str | None = None) -> str:
+    """A new, unique UID for a chore on a day (the token keeps a re-created event from reusing a deleted one's name)."""
+    return f"chore-{chore_id}-{day.isoformat()}-{token or secrets.token_hex(3)}@{UID_DOMAIN}"
 
 
 def is_ours(uid: str) -> bool:
@@ -35,12 +42,13 @@ def event_title(chore_name: str, people: list[str], status: str) -> str:
     return f"{STATUS_MARK[status]} {chore_name} ({who})"
 
 
-def freeze(records: list[PlannedRecord], now: datetime) -> tuple[list[PlannedRecord], set[str]]:
-    """(records to mark unknown, chores with an item in progress at `now`)."""
+def freeze(records: list[PlannedRecord], now: datetime) -> tuple[list[PlannedRecord], list[PlannedRecord]]:
+    """(records to mark unknown, records in progress at `now`). In-progress items stay where they are: their chore
+    isn't planned again, their time stays taken, and anything that needs their chore is planned after them."""
     frozen_open = [r for r in records if r.start < now and r.status == "open"]
     to_unknown = [r for r in frozen_open if r.end <= now]
-    pending = {r.chore_id for r in frozen_open if r.end > now}
-    return to_unknown, pending
+    in_progress = [r for r in frozen_open if r.end > now]
+    return to_unknown, in_progress
 
 
 @dataclass
@@ -48,21 +56,27 @@ class Changes:
     add: list[PlannedRecord] = field(default_factory=list)
     move: list[PlannedRecord] = field(default_factory=list)      # same UID, new time or people
     remove: list[PlannedRecord] = field(default_factory=list)
-    dropped: list[PlannedItem] = field(default_factory=list)     # planned, but its UID is already history
+    dropped: list[PlannedItem] = field(default_factory=list)     # that chore already has a reported item that day
 
     def __bool__(self) -> bool:
         return bool(self.add or self.move or self.remove)
 
 
 def reconcile(records: list[PlannedRecord], items: list[PlannedItem], now: datetime) -> Changes:
-    """How the saved plan from `now` on must change to match the new plan `items`."""
-    by_uid = {r.uid: r for r in records}
+    """How the saved plan from `now` on must change to match the new plan `items`. A saved item is the same item when
+    it's the same chore on the same day (it keeps its UID); otherwise a new UID is made.
+
+    Past items that weren't reported (open, about to become ❔, or already ❔) are never matched: they stay where they
+    were, and a copy planned later the same day is a new item. A reported item (done/skipped) that day is matched,
+    so its chore isn't planned again that day."""
+    by_key = {(r.chore_id, r.start.date()): r for r in records
+              if r.start >= now or r.status in ("done", "skipped")}
     changes = Changes()
     wanted = set()
     for item in items:
-        uid = event_uid(item.chore.id, item.start.date())
+        old = by_key.get((item.chore.id, item.start.date()))
+        uid = old.uid if old else event_uid(item.chore.id, item.start.date())
         new = PlannedRecord(item.chore.id, list(item.people), item.start, item.end, uid)
-        old = by_uid.get(uid)
         if old is None:
             changes.add.append(new)
         elif old.status != "open":
@@ -95,9 +109,10 @@ class EventData:
 
 
 def desired_events(records: list[PlannedRecord], names: dict[str, str], reminder: int) -> dict[str, EventData]:
+    """The events the Chores calendar should show: only what's still to do (🧹) or unreported (❔)."""
     return {r.uid: EventData(r.uid, event_title(names.get(r.chore_id, r.chore_id), r.people, r.status),
                              r.start, r.end, reminder)
-            for r in records}
+            for r in records if r.status in SHOWN}
 
 
 def calendar_diff(desired: dict[str, EventData], existing: dict[str, EventData]) -> tuple[list[EventData], list[str]]:

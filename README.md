@@ -87,8 +87,8 @@ planner chore set <id> key=value ...     e.g. interval=7,10,14 duration_h=1.5 pr
                                               not_before=2026-12-01 (not planned before that day)
 planner calendars                        list the calendars the app can read and whom each blocks
 planner plan                             plan the next 7 days, save it, update the Chores calendar
-planner done <chore> [--date D] [--by nicolas,anna]   record a chore as done (✅ in the calendar)
-planner skip <chore> [--date D]          record a chore as skipped (⏭)
+planner done <chore> [--date D] [--by nicolas,anna]   record a chore as done (it leaves the calendar)
+planner skip <chore> [--date D]          record a chore as skipped (it leaves the calendar)
 planner status                           last/next 7 days with ✅ ⏭ ❔ 🧹, and what's overdue
 planner serve                            the scheduler: re-plan every day at PLAN_TIMES (the container's command)
 planner health                           exit 0 if a run and a backup succeeded in the last 26 hours (healthcheck)
