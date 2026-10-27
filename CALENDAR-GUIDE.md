@@ -139,15 +139,16 @@ BUSY_CALENDARS=…existing entries…;work_shared_by_<owner>=nicolas
 - Separate calendars with `;`, and people with `,` (`=nicolas,anna` for both).
 - People are `nicolas` and `anna`. A typo stops the planner with an error rather than silently ignoring it.
 
-### Step 4: check
+### Step 4: reload and check
 
 ```bash
+docker compose up -d                                       # the running container only reads .env when it starts
 docker compose exec chore-aisist planner calendars        # BLOCKS should now show "nicolas"
 docker compose exec chore-aisist planner plan --dry-run   # work events show up as "Busy:" lines on chore days
 ```
 
-**To disconnect a calendar,** remove its entry from `BUSY_CALENDARS`. You can also remove the share or subscription
-in Nextcloud.
+**To disconnect a calendar,** remove its entry from `BUSY_CALENDARS` and run `docker compose up -d`. You can also
+remove the share or subscription in Nextcloud.
 
 ## 4. The Chores calendar (what the planner writes)
 
@@ -187,7 +188,8 @@ A skip doesn't reset the chore's clock: it stays due and comes back.
 
 ## 5. Settings
 
-All in the deploy folder's `.env`. Changes apply the next time the planner runs.
+All in the deploy folder's `.env`. After a change, run `docker compose up -d` in the deploy folder: the planner
+container keeps the settings it started with until it's recreated.
 
 | Setting | Default | What it does |
 |---|---|---|

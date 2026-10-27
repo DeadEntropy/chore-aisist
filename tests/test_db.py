@@ -313,7 +313,7 @@ def test_serve_runs_when_due_then_sleeps_until_the_next_time(conn, settings, mon
     runs = []
     monkeypatch.setattr(cli, "load_plan_times", lambda: (datetime.now().time().replace(microsecond=0),))
     monkeypatch.setattr(cli, "load_planning_settings", _planning)
-    monkeypatch.setattr(cli, "load_calendar_settings", lambda: None)
+    monkeypatch.setattr(cli, "load_calendar_settings", _cal)
     monkeypatch.setattr(cli.signal, "signal", lambda *a: None)
     monkeypatch.setattr(cli, "_run_plan", lambda c, planning, quiet: runs.append(1) or "done")
 
@@ -333,3 +333,38 @@ def test_serve_runs_when_due_then_sleeps_until_the_next_time(conn, settings, mon
     assert runs == [1]                                   # due on the first check, not again on the second
     assert db.last_run(conn, trigger="schedule", outcome="ok") is not None
     assert all(w > datetime.now() + timedelta(hours=23) for w in wakes)   # tomorrow, same time
+
+
+def test_plan_lock_is_exclusive_across_connections(conn, settings):
+    with db.connect(settings) as other:
+        with db.plan_lock(conn):
+            with pytest.raises(ValueError, match="still busy"):
+                with db.plan_lock(other, timeout_seconds=0):
+                    pass
+        with db.plan_lock(other, timeout_seconds=0):          # free again once released
+            pass
+
+
+def test_plan_lock_reads_what_the_previous_holder_committed(conn, settings):
+    seed.import_json(conn, SEED)
+    conn.commit()
+    with db.connect(settings) as other:
+        assert db.get_chore(other, "paint-wall").duration_h == 2      # `other` now reads from a snapshot
+        db.update_chore(conn, "paint-wall", {"duration_h": 5})
+        conn.commit()
+        assert db.get_chore(other, "paint-wall").duration_h == 2      # same snapshot: the change isn't visible
+        with db.plan_lock(other):
+            assert db.get_chore(other, "paint-wall").duration_h == 5  # the lock starts a fresh transaction
+
+
+def test_a_report_waits_for_a_running_plan(conn, settings, monkeypatch):
+    from planner import jobs
+    FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    conn.commit()
+    with db.connect(settings) as scheduler:
+        with db.plan_lock(scheduler):                                  # a plan run in progress elsewhere
+            monkeypatch.setattr(db, "PLAN_LOCK_TIMEOUT", 0)
+            with pytest.raises(ValueError, match="still busy"):
+                jobs.report(conn, _cal(), "paint-wall", "done", date(2026, 10, 31), ["nicolas"])
+    assert "paint-wall" not in db.last_done_dates(conn)                # nothing was recorded

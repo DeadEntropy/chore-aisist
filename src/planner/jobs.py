@@ -61,32 +61,34 @@ class RunSummary:
 
 def run_plan(conn, cal, planning: PlanningSettings, now: datetime, events: list[CalEvent]) -> RunSummary:
     """Plan from `now` to the end of the 7-day period starting today, save it, and make the Chores calendar match
-    (see `plans` for the rules). Raises CalendarSyncError if only the calendar update failed."""
-    start = now.date()
-    records = _saved(conn, start)
-    to_unknown, pending = plans.freeze(records, now)
-    chores = [c for c in db.get_chores(conn) if c.id not in pending]
-    result = plan_periods(chores, db.get_people(conn), db.last_done_dates(conn), start, 1, events,
-                          cal.buffer_minutes, planning, not_before=now)[0]
-    changes = plans.reconcile(records, result.plan.items, now)
+    (see `plans` for the rules). Raises CalendarSyncError if only the calendar update failed.
+    Holds the planner lock throughout, so a report from another process can't be overwritten mid-run."""
+    with db.plan_lock(conn):
+        start = now.date()
+        records = _saved(conn, start)
+        to_unknown, pending = plans.freeze(records, now)
+        chores = [c for c in db.get_chores(conn) if c.id not in pending]
+        result = plan_periods(chores, db.get_people(conn), db.last_done_dates(conn), start, 1, events,
+                              cal.buffer_minutes, planning, not_before=now)[0]
+        changes = plans.reconcile(records, result.plan.items, now)
 
-    for r in to_unknown:
-        r.status = "unknown"
-        db.update_planned(conn, r)
-    for r in changes.add:
-        db.add_planned(conn, r)
-    for r in changes.move:
-        db.update_planned(conn, r)
-    db.delete_planned(conn, [r.uid for r in changes.remove])
-    conn.commit()                       # the database is the source of truth; the calendar mirrors it
+        for r in to_unknown:
+            r.status = "unknown"
+            db.update_planned(conn, r)
+        for r in changes.add:
+            db.add_planned(conn, r)
+        for r in changes.move:
+            db.update_planned(conn, r)
+        db.delete_planned(conn, [r.uid for r in changes.remove])
+        conn.commit()                       # the database is the source of truth; the calendar mirrors it
 
-    summary = RunSummary(result, changes, to_unknown)
-    try:
-        summary.calendar_put, summary.calendar_deleted = sync_calendar(
-            conn, cal, start - timedelta(days=HISTORY_DAYS), start + timedelta(days=PERIOD_DAYS))
-    except Exception as exc:
-        raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
-    return summary
+        summary = RunSummary(result, changes, to_unknown)
+        try:
+            summary.calendar_put, summary.calendar_deleted = sync_calendar(
+                conn, cal, start - timedelta(days=HISTORY_DAYS), start + timedelta(days=PERIOD_DAYS))
+        except Exception as exc:
+            raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
+        return summary
 
 
 def sync_calendar(conn, cal, first: date, last: date) -> tuple[int, int]:
@@ -104,43 +106,45 @@ def report(conn, cal, chore_id: str, outcome: str, day: date, by: list[str] | No
     """Record that a chore was done or skipped on `day`, mark its planned item, and update the calendar.
 
     The planned item is the open or unknown one closest to `day`; `by` defaults to the people it was planned for.
+    Holds the planner lock throughout (see `run_plan`).
     """
-    outcome = {"done": "done", "skip": "skipped", "skipped": "skipped"}[outcome]
-    chore = db.get_chore(conn, chore_id)
-    if chore is None:
-        raise ValueError(f"No chore with id '{chore_id}' (see `planner chore list`)")
-    people = {p.id for p in db.get_people(conn)}
-    record = plans.find_record(db.planned_between(conn, _at(day - timedelta(days=HISTORY_DAYS)),
-                                                  _at(day + timedelta(days=PERIOD_DAYS + 1))), chore_id, day)
-    if by:
-        who = by
-    elif record:
-        who = record.people
-    elif chore.assignee in people:
-        who = [chore.assignee]
-    elif chore.assignee == "both":
-        who = sorted(people)
-    else:
-        who = []
-    if unknown := [p for p in who if p not in people]:
-        raise ValueError(f"Unknown person: {', '.join(unknown)} (known: {', '.join(sorted(people))})")
-    if outcome == "done" and not who:
-        raise ValueError(f"Who did '{chore_id}'? It wasn't planned for anyone: use --by")
+    with db.plan_lock(conn):
+        outcome = {"done": "done", "skip": "skipped", "skipped": "skipped"}[outcome]
+        chore = db.get_chore(conn, chore_id)
+        if chore is None:
+            raise ValueError(f"No chore with id '{chore_id}' (see `planner chore list`)")
+        people = {p.id for p in db.get_people(conn)}
+        record = plans.find_record(db.planned_between(conn, _at(day - timedelta(days=HISTORY_DAYS)),
+                                                      _at(day + timedelta(days=PERIOD_DAYS + 1))), chore_id, day)
+        if by:
+            who = by
+        elif record:
+            who = record.people
+        elif chore.assignee in people:
+            who = [chore.assignee]
+        elif chore.assignee == "both":
+            who = sorted(people)
+        else:
+            who = []
+        if unknown := [p for p in who if p not in people]:
+            raise ValueError(f"Unknown person: {', '.join(unknown)} (known: {', '.join(sorted(people))})")
+        if outcome == "done" and not who:
+            raise ValueError(f"Who did '{chore_id}'? It wasn't planned for anyone: use --by")
 
-    for person in (who if outcome == "done" else who[:1] or [None]):
-        db.record_completion(conn, Completion(chore_id, day, outcome, "claude", person))
-    if record:
-        record.status = outcome
-        if outcome == "done":
-            record.people = who                    # the event shows who actually did it
-        db.update_planned(conn, record)
-    conn.commit()
-    if cal is not None and record is not None:
-        try:
-            sync_calendar(conn, cal, record.start.date(), record.start.date() + timedelta(days=1))
-        except Exception as exc:
-            raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
-    return record
+        for person in (who if outcome == "done" else who[:1] or [None]):
+            db.record_completion(conn, Completion(chore_id, day, outcome, "claude", person))
+        if record:
+            record.status = outcome
+            if outcome == "done":
+                record.people = who                    # the event shows who actually did it
+            db.update_planned(conn, record)
+        conn.commit()
+        if cal is not None and record is not None:
+            try:
+                sync_calendar(conn, cal, record.start.date(), record.start.date() + timedelta(days=1))
+            except Exception as exc:
+                raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
+        return record
 
 
 def _saved(conn, start: date) -> list[PlannedRecord]:

@@ -318,6 +318,10 @@ no host cron. Phase 4a (`scheduler.py`, `planner serve`):
   succeeded for 26 hours.
 - A fresh database connection per check (a day-old one would have timed out); `SIGTERM` exits at once, and an
   interrupted run is simply redone by the next one.
+- Plan runs and `done`/`skip` reports hold one MariaDB named lock (`GET_LOCK`) through read → save → calendar
+  sync, so a report made while the 20:00 run is busy waits for it instead of being overwritten with ❔.
+- `serve` refuses to start without the calendar settings, so a misconfiguration shows at once as a restarting
+  container rather than 26 hours later.
 
 ### Two folders
 

@@ -312,7 +312,8 @@ def cmd_serve(conn, args, settings):
     start; a failed run is retried every 15 minutes until it succeeds or the next scheduled time comes."""
     times = load_plan_times()
     planning = load_planning_settings()
-    load_calendar_settings()                       # fail at start, not at 20:00, if the settings are wrong
+    if load_calendar_settings() is None:           # fail at start, not at 20:00, if the settings are wrong
+        raise ValueError("The scheduler needs the calendars to write the plan (CALDAV_URL not set)")
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))      # `docker stop`: exit at once (we're PID 1)
     log(f"Scheduler started: re-plans every day at {', '.join(t.strftime('%H:%M') for t in times)}")
     while True:

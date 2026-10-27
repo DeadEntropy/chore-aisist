@@ -41,6 +41,32 @@ def connect(settings: Settings):
         conn.close()
 
 
+PLAN_LOCK = "chore-aisist-plan"
+PLAN_LOCK_TIMEOUT = 120         # seconds to wait for another run to finish
+
+
+@contextmanager
+def plan_lock(conn, timeout_seconds: int | None = None):
+    """Hold the planner's named lock (MariaDB GET_LOCK) for the block, so plan runs and done/skip reports from
+    different processes (the scheduler and one-off commands) never interleave their read → save → calendar steps.
+
+    Once the lock is held, the current transaction is committed, so the block's reads see everything the previous
+    holder committed (a transaction started earlier would keep reading an older snapshot).
+    """
+    if timeout_seconds is None:
+        timeout_seconds = PLAN_LOCK_TIMEOUT
+    with conn.cursor() as cur:
+        cur.execute("SELECT GET_LOCK(%s, %s) AS got", (PLAN_LOCK, timeout_seconds))
+        if cur.fetchone()["got"] != 1:
+            raise ValueError(f"Another planner run is still busy (waited {timeout_seconds} s); try again in a minute")
+    try:
+        conn.commit()
+        yield
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("SELECT RELEASE_LOCK(%s)", (PLAN_LOCK,))
+
+
 # --- migrations -------------------------------------------------------------
 
 def migrate(conn, migrations_dir: Path = MIGRATIONS_DIR) -> list[str]:
