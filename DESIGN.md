@@ -96,6 +96,7 @@ CREATE TABLE chore (
   priority           TINYINT NULL,                      -- 1 nice to have … 5 costly to miss
   assignee           VARCHAR(16) NULL,                  -- nicolas | anna | either | both
   outdoor            BOOLEAN NOT NULL DEFAULT FALSE,    -- outdoor = weather-sensitive
+  not_before         DATE NULL,                         -- not planned before this day (e.g. car service in December)
   active             BOOLEAN NOT NULL DEFAULT TRUE,     -- FALSE = retired, kept for history
   created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -201,6 +202,11 @@ Decided for phase 1:
   before each yearly re-mulch). A done one-off need stays met.
 - Chores missing duration, priority, assignee (or interval, for recurring) are not planned and are listed as
   "needs details".
+- `not_before` (optional date): the chore is held back until the planning period that contains that day, and is
+  not placed on an earlier day of that period. Until then it's listed as "not before …" and anything that needs it
+  waits. A one-off's urgency counts from `not_before` instead of the day it was added, so it starts at 0.5 rather
+  than arriving already urgent. Once the date has passed it has no effect; for a recurring chore it only delays the
+  next time it's done (clear it with `not_before=none`).
 
 ### 6.3 Availability (when chores can happen)
 
@@ -415,3 +421,5 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - **Availability**: default Saturday and Sunday 08:00–18:00 for both (config); extra or removed time comes from
   calendar keywords ("Day off"/"Holiday", "Chores", "No chores", travel). No hours budget.
 - **Seasonality**: removed from the chore fields for now; add back if a chore really only applies part of the year.
+- **Not before**: a single optional date per chore (`not_before`) for "do this in early December"; not a season or a
+  deadline. Priority decides how soon after the date it gets done.

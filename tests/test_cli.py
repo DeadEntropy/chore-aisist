@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from planner.cli import build_parser, parse_fields
@@ -15,6 +17,13 @@ def test_parse_fields_rejects_unknown_and_bad_interval():
         parse_fields(["notes=hello"])
     with pytest.raises(ValueError):
         parse_fields(["interval=7,10"])
+
+
+def test_parse_fields_not_before():
+    assert parse_fields(["not_before=2026-12-01"]) == {"not_before": date(2026, 12, 1)}
+    assert parse_fields(["not_before=none"]) == {"not_before": None}
+    with pytest.raises(ValueError):
+        parse_fields(["not_before=early december"])
 
 
 def test_parse_fields_booleans():

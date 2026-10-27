@@ -153,6 +153,20 @@ def test_export_round_trip(conn, tmp_path):
     assert exported.keys() == original.keys()
     assert exported["screw-green-chairs"]["status"] == "done"
     assert exported["caulk-breakfast-room-window"]["needs"] == ["buy-caulk"]
+    assert "not_before" not in exported["caulk-breakfast-room-window"]
+
+
+def test_not_before_round_trip(conn, tmp_path):
+    seed.import_json(conn, SEED)
+    db.update_chore(conn, "paint-wall", {"not_before": date(2026, 12, 1)})
+    assert db.get_chore(conn, "paint-wall").not_before == date(2026, 12, 1)
+    out = tmp_path / "export.json"
+    seed.export_json(conn, out)
+    exported = {c["id"]: c for c in json.loads(out.read_text())["chores"]}
+    assert exported["paint-wall"]["not_before"] == "2026-12-01"
+    db.update_chore(conn, "paint-wall", {"not_before": None})
+    seed.import_json(conn, out, update=True)                          # the file brings the date back
+    assert db.get_chore(conn, "paint-wall").not_before == date(2026, 12, 1)
 
 
 # --- phase 3: saved plan, Chores calendar, done/skip ------------------------------------

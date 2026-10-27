@@ -173,7 +173,7 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
                 free[(p, not_before.date())] = subtract(free[(p, not_before.date())], (0, cutoff))
 
         ahead = next_available(person_ids, days[-1], events, buffer_minutes, planning)
-        scored, excluded = score_chores(chores, last_done, today=first, next_available=ahead)
+        scored, excluded = score_chores(chores, last_done, today=first, next_available=ahead, until=days[-1])
         plan = plan_period(scored, people, days, free)
         chore_days = _days_with_chore_time(person_ids, days, events, planning)
         period_events = sorted((e for e in events if _overlaps(e, days) and (e.kind != "busy" or _overlaps(e, chore_days))),
