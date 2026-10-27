@@ -14,10 +14,11 @@ from planner.models import Person, Plan, PlannedItem, Scored
 
 
 def plan_period(scored: list[Scored], people: list[Person], days: list[date],
-                free: dict[tuple[str, date], Slots]) -> Plan:
+                free: dict[tuple[str, date], Slots], ready_at: dict[str, datetime] | None = None) -> Plan:
+    """`ready_at`: when chores already in progress (not in `scored`) end; chores that need them start after that."""
     free = {key: list(slots) for key, slots in free.items()}      # don't modify the caller's slots
     items: list[PlannedItem] = []
-    placed_end: dict[str, datetime] = {}
+    placed_end: dict[str, datetime] = dict(ready_at or {})
     unplanned = []
     for s in scored:
         duration = round(s.chore.duration_h * 60)

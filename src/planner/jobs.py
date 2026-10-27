@@ -19,6 +19,7 @@ from planner.models import CalEvent, Chore, Completion, Person, Plan, PlannedRec
 from planner.scoring import score_chores
 
 PERIOD_DAYS = 7
+START_STEP_MINUTES = 15    # planning "from now" starts at the next quarter hour, so events start on :00/:15/:30/:45
 LOOKAHEAD_DAYS = 42        # how far past a period to look for the next day anyone can do chores
 
 
@@ -47,10 +48,11 @@ def dry_run(conn, start: date, periods: int, events: list[CalEvent], buffer_minu
             planning: PlanningSettings, now: datetime) -> list[PeriodResult]:
     """Load chores, people and history from the database, then `plan_periods` without writing anything.
     Planning from today starts at `now`; chores in progress aren't planned again."""
-    _, pending = plans.freeze(_saved(conn, now.date()), now)
-    chores = [c for c in db.get_chores(conn) if c.id not in pending]
+    _, in_progress = plans.freeze(_saved(conn, now.date()), now)
+    chores = [c for c in db.get_chores(conn) if c.id not in {r.chore_id for r in in_progress}]
     return plan_periods(chores, db.get_people(conn), db.last_done_dates(conn), start, periods, events,
-                        buffer_minutes, planning, not_before=now if start <= now.date() else None)
+                        buffer_minutes, planning, not_before=now if start <= now.date() else None,
+                        in_progress=in_progress)
 
 
 @dataclass
@@ -69,10 +71,10 @@ def run_plan(conn, cal, planning: PlanningSettings, now: datetime, events: list[
     with db.plan_lock(conn):
         start = now.date()
         records = _saved(conn, start)
-        to_unknown, pending = plans.freeze(records, now)
-        chores = [c for c in db.get_chores(conn) if c.id not in pending]
+        to_unknown, in_progress = plans.freeze(records, now)
+        chores = [c for c in db.get_chores(conn) if c.id not in {r.chore_id for r in in_progress}]
         result = plan_periods(chores, db.get_people(conn), db.last_done_dates(conn), start, 1, events,
-                              cal.buffer_minutes, planning, not_before=now)[0]
+                              cal.buffer_minutes, planning, not_before=now, in_progress=in_progress)[0]
         changes = plans.reconcile(records, result.plan.items, now)
 
         for r in to_unknown:
@@ -286,11 +288,14 @@ def _at(day: date) -> datetime:
 
 def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str, date], start: date,
                  periods: int, events: list[CalEvent], buffer_minutes: int,
-                 planning: PlanningSettings, not_before: datetime | None = None) -> list[PeriodResult]:
+                 planning: PlanningSettings, not_before: datetime | None = None,
+                 in_progress: list[PlannedRecord] = ()) -> list[PeriodResult]:
     """Plan `periods` consecutive 7-day periods from `start` (pure: no database, no network).
 
-    With `not_before` (normally now), nothing is planned before that moment. From the second period on, every chore
-    planned in the period before is assumed done on its day.
+    With `not_before` (normally now), nothing is planned before the next quarter hour after it. `in_progress` items
+    (started, not reported, not ended; their chores aren't in `chores`) keep their people's time taken, and chores
+    that need them are planned after they end. From the second period on, every chore planned in the period before
+    (or in progress) is assumed done on its day.
     """
     person_ids = [p.id for p in people]
     last_done = dict(last_done)
@@ -300,13 +305,23 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
         days = [first + timedelta(days=i) for i in range(PERIOD_DAYS)]
         free = free_slots(person_ids, days, planning.windows, events, buffer_minutes, planning.extra_day_window)
         if not_before is not None and not_before.date() in days:
-            cutoff = not_before.hour * 60 + not_before.minute + (1 if not_before.second else 0)
+            cutoff = round_up(not_before.hour * 60 + not_before.minute + (1 if not_before.second else 0),
+                              START_STEP_MINUTES)
             for p in person_ids:
                 free[(p, not_before.date())] = subtract(free[(p, not_before.date())], (0, cutoff))
+        current = [r for r in in_progress if r.start.date() in days]
+        for r in current:                                    # in progress: their time stays taken
+            day = r.start.date()
+            span = (r.start.hour * 60 + r.start.minute,
+                    24 * 60 if r.end.date() > day else r.end.hour * 60 + r.end.minute)
+            for p in r.people:
+                if (p, day) in free:
+                    free[(p, day)] = subtract(free[(p, day)], span)
 
         ahead = next_available(person_ids, days[-1], events, buffer_minutes, planning)
-        scored, excluded = score_chores(chores, last_done, today=first, next_available=ahead, until=days[-1])
-        plan = plan_period(scored, people, days, free)
+        scored, excluded = score_chores(chores, last_done, today=first, next_available=ahead, until=days[-1],
+                                        in_progress={r.chore_id for r in current})
+        plan = plan_period(scored, people, days, free, ready_at={r.chore_id: r.end for r in current})
         chore_days = _days_with_chore_time(person_ids, days, events, planning)
         period_events = sorted((e for e in events if _overlaps(e, days) and (e.kind != "busy" or _overlaps(e, chore_days))),
                                key=lambda e: e.start)
@@ -314,7 +329,13 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
         results.append(PeriodResult(plan, excluded, period_events, ahead, blocked))
         for item in plan.items:
             last_done[item.chore.id] = item.start.date()
+        for r in current:
+            last_done[r.chore_id] = r.start.date()
     return results
+
+
+def round_up(minutes: int, step: int) -> int:
+    return -(-minutes // step) * step
 
 
 def next_available(people: list[str], last_day: date, events: list[CalEvent], buffer_minutes: int,

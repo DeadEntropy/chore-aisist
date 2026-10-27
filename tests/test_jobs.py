@@ -145,3 +145,35 @@ def test_an_unreadable_backup_folder_doesnt_stop_the_run(tmp_path, monkeypatch):
     jobs.backup_before_run(None, BackupSettings(str(tmp_path), 30), datetime(2026, 10, 27, 20, 0), (time(20, 0),),
                            lambda message, error=False: lines.append((message, error)))
     assert lines and lines[0][1] and "Backup failed: PermissionError" in lines[0][0]
+
+
+# --- re-planning "from now": quarter hours, in-progress items ----------------------------
+
+def _in_progress(chore, start, end, who="nicolas"):
+    from planner.models import PlannedRecord
+    return PlannedRecord(chore, [who], start, end, f"chore-{chore}-x@chore-aisist")
+
+
+def test_planning_from_now_starts_at_the_next_quarter_hour():
+    now = datetime(2026, 10, 31, 10, 17)                  # Saturday 10:17
+    results = plan_periods([one_off("fix")], PERSONS, {}, now.date(), 1, [], 30, PLANNING, not_before=now)
+    assert results[0].plan.items[0].start == datetime(2026, 10, 31, 10, 30)
+
+
+def test_an_item_in_progress_keeps_its_time_taken():
+    now = datetime(2026, 10, 31, 10, 17)
+    busy = _in_progress("trim", datetime(2026, 10, 31, 9), datetime(2026, 10, 31, 12))
+    results = plan_periods([one_off("fix")], PERSONS, {}, now.date(), 1, [], 30, PLANNING, not_before=now,
+                           in_progress=[busy])
+    assert results[0].plan.items[0].start == datetime(2026, 10, 31, 12)          # after the trim, not on top of it
+
+
+def test_a_job_can_follow_a_need_in_progress():
+    now = datetime(2026, 10, 31, 10, 17)
+    order = _in_progress("order", datetime(2026, 10, 31, 10), datetime(2026, 10, 31, 11), who="anna")
+    job = Chore(id="mulch", name="mulch", category="garden", type="one_off", duration_h=1, priority=3,
+                assignee="nicolas", created_on=SAT, needs=["order"])
+    results = plan_periods([job], PERSONS, {}, now.date(), 1, [], 30, PLANNING, not_before=now, in_progress=[order])
+    item, = results[0].plan.items
+    assert item.start == datetime(2026, 10, 31, 11)                              # waits for the order to end
+    assert results[0].excluded == []
