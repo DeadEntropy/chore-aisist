@@ -12,6 +12,7 @@ those days are planned as if the weather were fine, and the daily re-plan applie
 import json
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
@@ -26,14 +27,24 @@ Forecast = dict[datetime, HourWeather]          # by the hour's start, local tim
 Check = Callable[[date, int, int], str | None]  # (day, start minute, end minute) → why not, or None
 
 
+class WeatherRejected(Exception):
+    """Open-Meteo refused the request (4xx): the weather settings are wrong, retrying won't help."""
+
+
 def fetch_forecast(settings: WeatherSettings, today: date) -> Forecast:
-    """Hourly forecast for today and the next `settings.days` days. Raises on network or format errors."""
+    """Hourly forecast for today and the next `settings.days` days. Raises WeatherRejected when Open-Meteo refuses
+    the settings (with its reason), anything else on network or format errors."""
     query = urlencode({"latitude": settings.latitude, "longitude": settings.longitude, "hourly": ",".join(HOURLY),
                        "timezone": settings.timezone, "forecast_days": settings.days + 1,
                        "temperature_unit": "celsius", "models": ",".join(settings.models),
                        "timeformat": "unixtime"})
-    with urlopen(f"{API_URL}?{query}", timeout=settings.timeout_seconds) as response:
-        data = json.load(response)
+    try:
+        with urlopen(f"{API_URL}?{query}", timeout=settings.timeout_seconds) as response:
+            data = json.load(response)
+    except HTTPError as exc:
+        if 400 <= exc.code < 500:
+            raise WeatherRejected(f"Open-Meteo refused the weather settings: {_reason(exc)}") from exc
+        raise
     return parse_forecast(data, today, settings.days, settings.timezone, settings.models)
 
 
@@ -56,6 +67,14 @@ def parse_forecast(data: dict, today: date, days: int, timezone: str, models: tu
     return out
 
 
+def _reason(exc: HTTPError) -> str:
+    """Open-Meteo's explanation ({"error": true, "reason": "..."}), or the HTTP status."""
+    try:
+        return json.loads(exc.read())["reason"]
+    except Exception:
+        return f"HTTP {exc.code} {exc.reason}"
+
+
 def _column(hourly: dict, name: str, models: tuple[str, ...], length: int) -> list:
     sources = [hourly.get(f"{name}_{m}") for m in models] if len(models) > 1 else [hourly.get(name)]
     sources = [s for s in sources if s is not None]
@@ -75,16 +94,21 @@ def check(forecast: Forecast, settings: WeatherSettings) -> Check:
         if rain:
             average = sum(p * m for p, m in rain) / sum(m for _, m in rain)
             if average > settings.max_rain_percent:
-                return f"rain {average:.0f}%"
+                return f"rain {_num(average)}% > {_num(settings.max_rain_percent)}%"
         feels = [h.feels_like_c for h, _ in hours if h.feels_like_c is not None]
         if feels and max(feels) > settings.max_feels_like_c:
-            return f"feels like {max(feels):.0f}°C"
+            return f"feels like {_num(max(feels))}°C > {_num(settings.max_feels_like_c)}°C"
         uv = [h.uv_index for h, _ in hours if h.uv_index is not None]
         if uv and max(uv) > settings.max_uv_index:
-            return f"UV {max(uv):.0f}"
+            return f"UV {_num(max(uv))} > {_num(settings.max_uv_index)}"
         return None
 
     return why_not
+
+
+def _num(value: float) -> str:
+    """One decimal at most, so a value just over a limit doesn't print as the limit: 20.4, 7.3, 75."""
+    return f"{round(value, 1):g}"
 
 
 def day_summary(forecast: Forecast, day: date, start: int, end: int) -> str | None:

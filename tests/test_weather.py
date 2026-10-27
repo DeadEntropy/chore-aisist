@@ -29,7 +29,7 @@ def test_rain_is_averaged_over_the_chore():
 
 def test_rain_over_the_limit_rules_the_time_out():
     forecast = hours(SUN, 8, [75] * 10)                     # a wet Sunday
-    assert weather.check(forecast, SETTINGS)(SUN, minutes("08:00"), minutes("12:00")) == "rain 75%"
+    assert weather.check(forecast, SETTINGS)(SUN, minutes("08:00"), minutes("12:00")) == "rain 75% > 20%"
 
 
 def test_rain_at_the_limit_is_fine():
@@ -41,7 +41,7 @@ def test_partial_hours_count_for_the_minutes_they_cover():
     forecast = hours(SUN, 8, [0, 60])                       # 08:15-09:15: 45 min at 0%, 15 min at 60% → 15%
     rule = weather.check(forecast, SETTINGS)
     assert rule(SUN, minutes("08:15"), minutes("09:15")) is None
-    assert rule(SUN, minutes("08:30"), minutes("09:30")) == "rain 30%"
+    assert rule(SUN, minutes("08:30"), minutes("09:30")) == "rain 30% > 20%"
 
 
 def test_one_hot_or_sunny_hour_is_enough():
@@ -49,8 +49,8 @@ def test_one_hot_or_sunny_hour_is_enough():
     forecast[datetime(2026, 11, 1, 14)] = HourWeather(0, 38.0, 5)
     forecast[datetime(2026, 11, 1, 13)] = HourWeather(0, 30.0, 9)
     rule = weather.check(forecast, SETTINGS)
-    assert rule(SUN, minutes("14:00"), minutes("15:00")) == "feels like 38°C"
-    assert rule(SUN, minutes("13:00"), minutes("14:00")) == "UV 9"
+    assert rule(SUN, minutes("14:00"), minutes("15:00")) == "feels like 38°C > 35°C"
+    assert rule(SUN, minutes("13:00"), minutes("14:00")) == "UV 9 > 7"
     assert rule(SUN, minutes("12:00"), minutes("13:00")) is None
 
 
@@ -65,7 +65,7 @@ def test_hours_without_a_forecast_are_fine():
 def test_limits_come_from_the_settings():
     strict = WeatherSettings(0.0, 0.0, "UTC", max_rain_percent=5, max_feels_like_c=40, max_uv_index=11)
     forecast = hours(SUN, 8, [10], feels=38.0, uv=10)
-    assert weather.check(forecast, strict)(SUN, minutes("08:00"), minutes("09:00")) == "rain 10%"
+    assert weather.check(forecast, strict)(SUN, minutes("08:00"), minutes("09:00")) == "rain 10% > 5%"
 
 
 def answer(first: date, days: int):
@@ -129,3 +129,34 @@ def test_hours_are_local_time_across_the_clock_change():
     forecast = weather.parse_forecast(data, date(2026, 10, 31), 3, "America/New_York")
     assert sorted(forecast) == [datetime(2026, 10, 31, 9), datetime(2026, 11, 1, 9)]
     assert forecast[datetime(2026, 11, 1, 9)].rain_percent == 75
+
+
+def test_a_value_just_over_the_limit_does_not_print_as_the_limit():
+    forecast = hours(SUN, 8, [20.4], uv=7.3)
+    rule = weather.check(forecast, SETTINGS)
+    assert rule(SUN, minutes("08:00"), minutes("09:00")) == "rain 20.4% > 20%"
+    forecast = hours(SUN, 8, [0], uv=7.34)
+    assert weather.check(forecast, SETTINGS)(SUN, minutes("08:00"), minutes("09:00")) == "UV 7.3 > 7"
+
+
+def test_refused_settings_give_open_meteo_s_reason(monkeypatch):
+    import io
+    from urllib.error import HTTPError
+    body = b'{"reason": "Invalid value: Cannot initialize MultiDomains from invalid String value ecmwf_ifz025", "error": true}'
+
+    def refuse(url, timeout):
+        raise HTTPError(url, 400, "Bad Request", {}, io.BytesIO(body))
+    monkeypatch.setattr(weather, "urlopen", refuse)
+    with pytest.raises(weather.WeatherRejected, match="invalid String value ecmwf_ifz025"):
+        weather.fetch_forecast(SETTINGS, SUN)
+
+
+def test_a_server_error_is_not_a_settings_problem(monkeypatch):
+    import io
+    from urllib.error import HTTPError
+
+    def fail(url, timeout):
+        raise HTTPError(url, 503, "Service Unavailable", {}, io.BytesIO(b""))
+    monkeypatch.setattr(weather, "urlopen", fail)
+    with pytest.raises(HTTPError):
+        weather.fetch_forecast(SETTINGS, SUN)

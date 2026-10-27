@@ -247,7 +247,7 @@ def test_a_wet_sunday_keeps_the_mulching_off_it():
 
     result = plan_periods(chores, PERSONS, {}, START, 1, [], 30, WITH_WEATHER, forecast=wet_sunday())[0]
     assert {i.start.date() for i in result.plan.items} == {SAT}           # two 4 h jobs fit on Saturday
-    assert [why for _, why in result.plan.unplanned] == ["weather whenever it would fit (Sun 01 Nov 08:00: rain 75%)"]
+    assert [why for _, why in result.plan.unplanned] == ["weather whenever it would fit (Sun 01 Nov 08:00: rain 75% > 20%)"]
     assert result.weather == [(SAT, "rain 0%, feels like up to 30°C, UV up to 4"),
                               (sun, "rain 75%, feels like up to 30°C, UV up to 4")]
 
@@ -258,13 +258,40 @@ def test_the_forecast_is_ignored_without_weather_settings():
     assert result.plan.items and result.weather == []
 
 
-def test_an_unreadable_forecast_plans_without_it(monkeypatch, capsys):
+def test_an_unreadable_forecast_is_retried_then_planned_without(monkeypatch, capsys):
+    calls, waits = [], []
+
     def broken(settings, today):
+        calls.append(today)
         raise TimeoutError("timed out")
     monkeypatch.setattr(weather, "fetch_forecast", broken)
-    assert jobs.fetch_weather(WITH_WEATHER, SAT) == (None, "TimeoutError: timed out")
-    assert "couldn't read the weather forecast" in capsys.readouterr().err
+    assert jobs.fetch_weather(WITH_WEATHER, SAT, sleep=waits.append) == (None, "TimeoutError: timed out")
+    assert len(calls) == 3 and waits == [30, 60]
+    assert "planning without it" in capsys.readouterr().err
     assert jobs.fetch_weather(PLANNING, SAT) == (None, None)            # not configured: no error
+
+
+def test_a_retry_that_works_uses_the_forecast(monkeypatch):
+    answers = [TimeoutError("timed out"), wet_sunday()]
+
+    def flaky(settings, today):
+        a = answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+    monkeypatch.setattr(weather, "fetch_forecast", flaky)
+    assert jobs.fetch_weather(WITH_WEATHER, SAT, sleep=lambda s: None) == (wet_sunday(), None)
+
+
+def test_refused_settings_are_not_retried(monkeypatch):
+    calls = []
+
+    def refuse(settings, today):
+        calls.append(today)
+        raise weather.WeatherRejected("Open-Meteo refused the weather settings: bad model")
+    monkeypatch.setattr(weather, "fetch_forecast", refuse)
+    forecast, error = jobs.fetch_weather(WITH_WEATHER, SAT, sleep=lambda s: None)
+    assert forecast is None and len(calls) == 1 and error.startswith(jobs.WEATHER_REJECTED)
 
 
 def test_the_run_log_says_when_the_forecast_was_missing():

@@ -9,6 +9,7 @@ failed) they're planned as before.
 """
 
 import sys
+import time as clock
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -183,17 +184,30 @@ def fetch_events(cal: CalendarSettings, first: date, last: date) -> list[CalEven
                          "Use --dry-run --no-calendar to plan without them.") from exc
 
 
-def fetch_weather(planning: PlanningSettings, today: date) -> tuple[Forecast | None, str | None]:
-    """(forecast, error). The forecast is a nice-to-have: if it can't be read, the error is printed (the scheduler's
-    log) and returned, and the plan is made without it, as when the weather isn't configured."""
+WEATHER_RETRY_SECONDS = (30, 60)       # waits before the 2nd and 3rd try: a short outage doesn't move chores
+WEATHER_REJECTED = "Weather settings rejected"   # in the run log; `health` looks for it
+
+
+def fetch_weather(planning: PlanningSettings, today: date, sleep=clock.sleep) -> tuple[Forecast | None, str | None]:
+    """(forecast, error). The forecast is a nice-to-have: if it can't be read after the retries, the error is
+    printed (the scheduler's log) and returned, and the plan is made without it, as when the weather isn't
+    configured. Settings Open-Meteo refuses aren't retried; their error starts with WEATHER_REJECTED."""
     if planning.weather is None:
         return None, None
-    try:
-        return weather.fetch_forecast(planning.weather, today), None
-    except Exception as exc:          # network, timeout, unexpected answer: plan as if there were no forecast
-        error = f"{type(exc).__name__}: {exc}"
-        print(f"error: couldn't read the weather forecast ({error}); planning without it", file=sys.stderr)
-        return None, error
+    for wait in (*WEATHER_RETRY_SECONDS, None):
+        try:
+            return weather.fetch_forecast(planning.weather, today), None
+        except weather.WeatherRejected as exc:
+            error = f"{WEATHER_REJECTED}: {exc}"
+            break
+        except Exception as exc:      # network, timeout, unexpected answer: try again, then plan without it
+            error = f"{type(exc).__name__}: {exc}"
+            if wait is None:
+                break
+            print(f"warning: couldn't read the weather forecast ({error}); trying again in {wait} s", file=sys.stderr)
+            sleep(wait)
+    print(f"error: couldn't read the weather forecast ({error}); planning without it", file=sys.stderr)
+    return None, error
 
 
 def plan_now(conn, cal: CalendarSettings | None, planning: PlanningSettings, trigger: str) -> RunSummary:
@@ -284,8 +298,13 @@ def backup_before_run(settings: Settings, backups: BackupSettings, now: datetime
 def health(conn, now: datetime, backups: BackupSettings | None) -> tuple[list[str], str]:
     """(problems, summary) for `planner health`: unhealthy without a successful *scheduled* run, or (when backups
     are on) a backup, in the last 26 hours. Only scheduled runs count, so a hung scheduler isn't hidden by the
-    re-plans that `done`/`skip` make."""
+    re-plans that `done`/`skip` make. Also unhealthy when the latest run had its weather settings refused: a typo
+    would otherwise plan without the weather forever, unnoticed."""
     problems = []
+    latest_ok = db.last_run(conn, outcome="ok")         # any run: a manual `plan` after fixing the settings clears it
+    if latest_ok and WEATHER_REJECTED in (latest_ok.message or ""):
+        problems.append("the last run planned without the weather: Open-Meteo refused the WEATHER_ settings "
+                        "(the reason is in that run's output, or the scheduler's log)")
     last = db.last_run(conn, trigger="schedule", outcome="ok")
     if not scheduler.is_healthy(now, last.started_at if last else None):
         failed = db.last_run(conn, trigger="schedule")

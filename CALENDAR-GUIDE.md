@@ -206,9 +206,12 @@ It then goes to the next good time (later that day, or another day); if there's 
 time and comes back later. Indoor chores ignore the weather. `planner plan --dry-run` shows the forecast it used:
 ```
   Weather: Sun 01 Nov  rain 33-86%, feels like up to 32°C, UV up to 6
-  Didn't fit: trim-bushes (weather whenever it would fit (Sat 31 Oct 11:00: rain 40%)); ...
+  Didn't fit: trim-bushes (weather whenever it would fit (Sat 31 Oct 11:00: rain 40% > 20%)); ...
 ```
-If the weather service can't be reached, the planner says so in its log and plans as if the weather were fine.
+If the weather service can't be reached, the planner tries twice more (after 30 s, then 60 s), then says so in its
+log and plans as if the weather were fine. If it refuses the settings (e.g. a typo in `WEATHER_MODELS`), the planner
+also plans without the weather, and `planner health` reports it (the container shows as unhealthy) until a run gets the
+forecast again.
 
 ## 6. Settings
 

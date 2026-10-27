@@ -265,7 +265,7 @@ weather) and gives `fitting` a rule for outdoor chores. A start time is ruled ou
   up is "very high"). Heat and sunburn come from the worst hour, so these aren't averaged.
 
 The outdoor chore then tries the next quarter hour, the next free time, the next day; if nothing fits it's unplanned
-with the reason (`weather whenever it would fit (Sun 01 Nov 08:00: rain 33%)`) and comes back on a later run.
+with the reason (`weather whenever it would fit (Sun 01 Nov 08:00: rain 33% > 20%)`) and comes back on a later run.
 Indoor chores ignore the weather.
 
 - **Horizon:** the forecast is used for today and the next `WEATHER_DAYS` (3) days only; further out it's too
@@ -274,8 +274,11 @@ Indoor chores ignore the weather.
 - **Models:** weather models disagree, a lot in the Florida rainy season. `WEATHER_MODELS` lists Open-Meteo models in
   order of preference; each value comes from the first that has it. Default `ecmwf_ifs025,best_match`: ECMWF
   matched the phone's forecast best when it was chosen; it has no UV index, which then comes from `best_match`.
-- **Failure:** if the forecast can't be read, the error is logged (and kept in the run log) and the plan is made
-  without it, as before the weather existed: the weather is a nice-to-have, unlike the family calendars.
+- **Failure:** if the forecast can't be read, it's tried twice more (after 30 s and 60 s, so a short outage doesn't
+  move outdoor chores back into the rain on everyone's phone), then the error is logged (and kept in the run log)
+  and the plan is made without it, as before the weather existed: the weather is a nice-to-have, unlike the family
+  calendars. Settings Open-Meteo refuses (4xx, e.g. a misspelt model) aren't retried; the run log keeps its reason
+  and `planner health` is unhealthy until a run gets the forecast again, so a typo can't go unnoticed.
 - `planner plan --dry-run` prints a `Weather:` line per chore day in the horizon.
 
 ## 7. CalDAV integration
