@@ -57,6 +57,9 @@ def dump(settings: Settings, folder: Path, now: datetime, keep_days: int) -> Pat
         with tempfile.TemporaryFile() as raw:
             try:
                 # stdout to a file and stderr through communicate(): neither pipe can fill up and block the dump
+                # MYSQL_PWD rather than an option file (decided in #9): the child's environment is readable only by
+                # this user, and this process already holds the same password in its own environment (DB_PASSWORD),
+                # so nothing new is exposed; an option file would need quoting for #, \ and " in the password.
                 proc = subprocess.run(command, stdout=raw, stderr=subprocess.PIPE, timeout=DUMP_TIMEOUT,
                                       env={**os.environ, "MYSQL_PWD": settings.db_password})
             except subprocess.TimeoutExpired:

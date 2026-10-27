@@ -74,3 +74,15 @@ def test_real_plan_rejects_dry_run_only_flags(flags):
     args = build_parser().parse_args(["plan", *flags])
     with pytest.raises(ValueError, match="only works? with --dry-run"):
         cmd_plan(None, args, None)
+
+
+def test_backup_command_reports_file_errors_cleanly(monkeypatch, tmp_path):
+    from planner import cli
+    from planner.config import BackupSettings
+    monkeypatch.setattr(cli, "load_backup_settings", lambda: BackupSettings(str(tmp_path), 30))
+
+    def unwritable(*args):
+        raise PermissionError(13, "Permission denied", str(tmp_path))
+    monkeypatch.setattr(cli.backup, "dump", unwritable)
+    with pytest.raises(ValueError, match="Backup failed: PermissionError"):
+        cli.cmd_backup(None, None, None)

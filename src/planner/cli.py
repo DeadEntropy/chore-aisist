@@ -273,7 +273,11 @@ def cmd_backup(conn, args, settings):
     backups = load_backup_settings()
     if backups is None:
         raise ValueError("BACKUP_DIR is not set")
-    print(f"Backed up to {backup.dump(settings, Path(backups.folder), datetime.now(), backups.keep_days)}")
+    try:
+        target = backup.dump(settings, Path(backups.folder), datetime.now(), backups.keep_days)
+    except OSError as exc:                     # unwritable folder, mariadb-dump not installed
+        raise ValueError(f"Backup failed: {type(exc).__name__}: {exc}") from exc
+    print(f"Backed up to {target}")
 
 
 def cmd_health(conn, args, settings):
