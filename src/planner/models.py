@@ -17,6 +17,7 @@ class Chore:
     priority: int | None = None        # 1 nice to have … 5 costly to miss
     assignee: str | None = None        # nicolas | anna | either | both
     outdoor: bool = False              # outdoor = weather-sensitive
+    not_before: date | None = None     # not planned before this day (one-offs wait from it)
     needs: list[str] = field(default_factory=list)
     active: bool = True
     created_on: date | None = None     # set by the database; one-offs wait from this date

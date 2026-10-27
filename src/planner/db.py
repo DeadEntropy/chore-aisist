@@ -15,7 +15,7 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 CHORE_COLUMNS = [
     "id", "name", "category", "type",
     "interval_min_days", "interval_target_days", "interval_max_days",
-    "duration_h", "priority", "assignee", "outdoor", "active",
+    "duration_h", "priority", "assignee", "outdoor", "not_before", "active",
 ]
 
 
