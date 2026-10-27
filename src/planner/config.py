@@ -1,5 +1,6 @@
 """Settings, read once from environment variables (a local `.env` is loaded if present)."""
 
+import math
 import os
 from dataclasses import dataclass
 from datetime import time
@@ -100,6 +101,10 @@ def load_weather_settings() -> WeatherSettings | None:
     days = int(os.environ.get("WEATHER_DAYS", "3"))
     if not 0 <= days <= 15:
         raise ValueError(f"WEATHER_DAYS must be 0 to 15, got {days}")
+    limits = {var: float(os.environ.get(var, default)) for var, default in
+              (("MAX_RAIN_PERCENT", "20"), ("MAX_FEELS_LIKE_C", "35"), ("MAX_UV_INDEX", "7"))}
+    if bad := [f"{var}={value}" for var, value in limits.items() if not math.isfinite(value)]:
+        raise ValueError(f"Weather limits must be numbers: {', '.join(bad)}")   # nan would never rule anything out
     return WeatherSettings(
         latitude=latitude,
         longitude=longitude,
@@ -107,9 +112,9 @@ def load_weather_settings() -> WeatherSettings | None:
         days=days,
         models=tuple(m.strip() for m in os.environ.get("WEATHER_MODELS", "ecmwf_ifs025,best_match").split(",")
                      if m.strip()) or ("best_match",),
-        max_rain_percent=float(os.environ.get("MAX_RAIN_PERCENT", "20")),
-        max_feels_like_c=float(os.environ.get("MAX_FEELS_LIKE_C", "35")),
-        max_uv_index=float(os.environ.get("MAX_UV_INDEX", "7")),
+        max_rain_percent=limits["MAX_RAIN_PERCENT"],
+        max_feels_like_c=limits["MAX_FEELS_LIKE_C"],
+        max_uv_index=limits["MAX_UV_INDEX"],
     )
 
 

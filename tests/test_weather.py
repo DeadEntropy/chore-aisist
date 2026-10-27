@@ -1,4 +1,5 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -68,8 +69,10 @@ def test_limits_come_from_the_settings():
 
 
 def answer(first: date, days: int):
-    times = [datetime.combine(first, datetime.min.time()) + timedelta(hours=h) for h in range(24 * days)]
-    return {"hourly": {"time": [t.strftime("%Y-%m-%dT%H:%M") for t in times],
+    """Open-Meteo's answer (Unix times) for `days` days from UTC midnight on `first`."""
+    start = datetime.combine(first, datetime.min.time(), timezone.utc)
+    times = [start + timedelta(hours=h) for h in range(24 * days)]
+    return {"hourly": {"time": [int(t.timestamp()) for t in times],
                        "precipitation_probability": [h % 24 for h in range(len(times))],
                        "apparent_temperature": [30.5] * len(times),
                        "uv_index": [None] * len(times)}}
@@ -77,7 +80,7 @@ def answer(first: date, days: int):
 
 def test_parse_keeps_today_and_the_next_days_only():
     today = date(2026, 10, 29)
-    forecast = weather.parse_forecast(answer(today, 7), today, 3)
+    forecast = weather.parse_forecast(answer(today, 7), today, 3, "UTC")
     assert min(forecast).date() == today and max(forecast).date() == today + timedelta(days=3)
     assert forecast[datetime(2026, 11, 1, 14)] == HourWeather(14, 30.5, None)
 
@@ -86,13 +89,13 @@ def test_parse_rejects_a_broken_answer():
     data = answer(SUN, 1)
     data["hourly"]["uv_index"] = [1.0]
     with pytest.raises(ValueError):
-        weather.parse_forecast(data, SUN, 3)
+        weather.parse_forecast(data, SUN, 3, "UTC")
 
 
 def test_missing_columns_are_treated_as_no_forecast():
     data = answer(SUN, 1)
     del data["hourly"]["uv_index"]
-    assert weather.parse_forecast(data, SUN, 0)[datetime(2026, 11, 1, 9)].uv_index is None
+    assert weather.parse_forecast(data, SUN, 0, "UTC")[datetime(2026, 11, 1, 9)].uv_index is None
 
 
 def test_day_summary():
@@ -103,7 +106,7 @@ def test_day_summary():
 
 
 def test_each_value_comes_from_the_first_model_that_has_it():
-    times = ["2026-11-01T08:00", "2026-11-01T09:00"]
+    times = [int(datetime(2026, 11, 1, h, tzinfo=timezone.utc).timestamp()) for h in (8, 9)]
     data = {"hourly": {"time": times,
                        "precipitation_probability_ecmwf_ifs025": [33, None],
                        "apparent_temperature_ecmwf_ifs025": [26.3, 27.9],
@@ -111,6 +114,18 @@ def test_each_value_comes_from_the_first_model_that_has_it():
                        "precipitation_probability_best_match": [12, 26],
                        "apparent_temperature_best_match": [28.5, 29.0],
                        "uv_index_best_match": [0.1, 1.1]}}
-    forecast = weather.parse_forecast(data, SUN, 0, ("ecmwf_ifs025", "best_match"))
+    forecast = weather.parse_forecast(data, SUN, 0, "UTC", ("ecmwf_ifs025", "best_match"))
     assert forecast[datetime(2026, 11, 1, 8)] == HourWeather(33, 26.3, 0.1)
     assert forecast[datetime(2026, 11, 1, 9)] == HourWeather(26, 27.9, 1.1)
+
+
+def test_hours_are_local_time_across_the_clock_change():
+    """Clocks go back at 02:00 on Sun 1 Nov 2026 in New York: 09:00 local is 13:00 UTC on Saturday, 14:00 UTC on
+    Sunday. (Open-Meteo's ISO labels would keep Saturday's offset and call Sunday's 09:00 "10:00".)"""
+    ny = ZoneInfo("America/New_York")
+    local = [datetime(2026, 10, 31, 9, tzinfo=ny), datetime(2026, 11, 1, 9, tzinfo=ny)]
+    data = {"hourly": {"time": [int(t.timestamp()) for t in local], "precipitation_probability": [10, 75],
+                       "apparent_temperature": [30, 30], "uv_index": [1, 1]}}
+    forecast = weather.parse_forecast(data, date(2026, 10, 31), 3, "America/New_York")
+    assert sorted(forecast) == [datetime(2026, 10, 31, 9), datetime(2026, 11, 1, 9)]
+    assert forecast[datetime(2026, 11, 1, 9)].rain_percent == 75

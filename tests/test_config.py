@@ -103,7 +103,9 @@ def test_weather_settings_defaults(weather_env):
 
 
 @pytest.mark.parametrize("values", [{"WEATHER_LATITUDE": "10"}, {"WEATHER_LATITUDE": "95", "WEATHER_LONGITUDE": "0"},
-                                    {"WEATHER_LATITUDE": "1", "WEATHER_LONGITUDE": "1", "WEATHER_DAYS": "-1"}])
+                                    {"WEATHER_LATITUDE": "1", "WEATHER_LONGITUDE": "1", "WEATHER_DAYS": "-1"},
+                                    {"WEATHER_LATITUDE": "1", "WEATHER_LONGITUDE": "1", "MAX_RAIN_PERCENT": "nan"},
+                                    {"WEATHER_LATITUDE": "1", "WEATHER_LONGITUDE": "1", "MAX_UV_INDEX": "inf"}])
 def test_bad_weather_settings(weather_env, values):
     weather_env(**values)
     with pytest.raises(ValueError):

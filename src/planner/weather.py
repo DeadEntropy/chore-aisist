@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from urllib.parse import urlencode
 from urllib.request import urlopen
+from zoneinfo import ZoneInfo
 
 from planner.config import WeatherSettings
 from planner.models import HourWeather
@@ -29,14 +30,17 @@ def fetch_forecast(settings: WeatherSettings, today: date) -> Forecast:
     """Hourly forecast for today and the next `settings.days` days. Raises on network or format errors."""
     query = urlencode({"latitude": settings.latitude, "longitude": settings.longitude, "hourly": ",".join(HOURLY),
                        "timezone": settings.timezone, "forecast_days": settings.days + 1,
-                       "temperature_unit": "celsius", "models": ",".join(settings.models)})
+                       "temperature_unit": "celsius", "models": ",".join(settings.models),
+                       "timeformat": "unixtime"})
     with urlopen(f"{API_URL}?{query}", timeout=settings.timeout_seconds) as response:
         data = json.load(response)
-    return parse_forecast(data, today, settings.days, settings.models)
+    return parse_forecast(data, today, settings.days, settings.timezone, settings.models)
 
 
-def parse_forecast(data: dict, today: date, days: int, models: tuple[str, ...] = ()) -> Forecast:
-    """Open-Meteo's JSON answer → hours from today to `days` days after (later hours are dropped). With several
+def parse_forecast(data: dict, today: date, days: int, timezone: str, models: tuple[str, ...] = ()) -> Forecast:
+    """Open-Meteo's JSON answer → hours from today to `days` days after (later hours are dropped), keyed by local
+    time in `timezone`. Hours come as Unix timestamps: Open-Meteo's ISO labels keep the UTC offset of the moment
+    they're asked for, so after a clock change they'd be an hour off. With several
     `models`, columns are named e.g. `uv_index_ecmwf_ifs025`; each hour's value comes from the first model that has
     it. With one model (or none), they're plain `uv_index`."""
     hourly = data["hourly"]
@@ -44,8 +48,9 @@ def parse_forecast(data: dict, today: date, days: int, models: tuple[str, ...] =
     columns = [_column(hourly, name, models, len(times)) for name in HOURLY]
     last = today + timedelta(days=days)
     out: Forecast = {}
+    zone = ZoneInfo(timezone)
     for t, rain, feels, uv in zip(times, *columns):
-        hour = datetime.fromisoformat(t)
+        hour = datetime.fromtimestamp(t, zone).replace(tzinfo=None)
         if today <= hour.date() <= last:
             out[hour] = HourWeather(rain, feels, uv)
     return out
