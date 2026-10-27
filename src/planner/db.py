@@ -11,6 +11,7 @@ from planner.config import Settings
 from planner.models import Chore, Completion, Person, PlannedRecord, RunRecord
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+DatabaseError = pymysql.err.MySQLError          # so other modules can catch database errors without pymysql
 
 CHORE_COLUMNS = [
     "id", "name", "category", "type",

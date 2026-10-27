@@ -303,61 +303,54 @@ def test_run_log_round_trip(conn):
 
 
 def test_real_runs_are_logged_even_when_they_fail(conn, monkeypatch):
-    from planner import cli
-    monkeypatch.setattr(cli, "_run_plan", lambda c, planning, quiet: "2 added")
-    cli.run_plan(conn, _planning(), trigger="manual")
+    from planner import jobs
+    monkeypatch.setattr(jobs, "_plan_now", lambda c, cal, planning: "summary")
+    monkeypatch.setattr(jobs, "describe", lambda summary: "2 added")
+    assert jobs.plan_now(conn, _cal(), _planning(), "manual") == "summary"
     assert (db.last_run(conn).outcome, db.last_run(conn).message) == ("ok", "2 added")
 
-    def boom(c, planning, quiet):
+    def boom(c, cal, planning):
         raise ValueError("Couldn't read the calendars")
-    monkeypatch.setattr(cli, "_run_plan", boom)
+    monkeypatch.setattr(jobs, "_plan_now", boom)
     with pytest.raises(ValueError):
-        cli.run_plan(conn, _planning(), trigger="schedule")
+        jobs.plan_now(conn, _cal(), _planning(), "schedule")
     last = db.last_run(conn)
     assert (last.trigger, last.outcome, last.message) == ("schedule", "error", "Couldn't read the calendars")
 
 
-def test_health(conn, capsys):
-    from planner import cli
+def test_health(conn):
+    from planner import jobs
     from planner.models import RunRecord
-    assert cli.cmd_health(conn, None, None) == 1
     now = datetime.now()
+    problems, _ = jobs.health(conn, now, None)
+    assert problems == ["no successful run in the last 26 hours"]
     db.log_run(conn, RunRecord(now - timedelta(hours=1), now, "schedule", "ok", "ok"))
-    assert cli.cmd_health(conn, None, None) == 0
-    assert "ok: last successful run" in capsys.readouterr().out
+    problems, summary = jobs.health(conn, now, None)
+    assert problems == [] and summary.startswith("last successful run")
 
 
-def test_serve_runs_when_due_then_sleeps_until_the_next_time(conn, settings, monkeypatch, tmp_path):
-    from planner import cli
+def test_scheduled_check_runs_when_due_and_backs_up_first(conn, settings, monkeypatch, tmp_path):
+    from planner import jobs
     from planner.config import BackupSettings
     seed.import_json(conn, SEED)
     conn.commit()
-    runs, dumps = [], []
-    monkeypatch.setattr(cli, "load_backup_settings", lambda: BackupSettings(str(tmp_path), 30))
-    monkeypatch.setattr(cli.backup, "dump", lambda s, folder, now, keep: dumps.append(now) or folder / "x.sql.gz")
-    monkeypatch.setattr(cli, "load_plan_times", lambda: (datetime.now().time().replace(microsecond=0),))
-    monkeypatch.setattr(cli, "load_planning_settings", _planning)
-    monkeypatch.setattr(cli, "load_calendar_settings", _cal)
-    monkeypatch.setattr(cli.signal, "signal", lambda *a: None)
-    monkeypatch.setattr(cli, "_run_plan", lambda c, planning, quiet: runs.append(1) or "done")
+    steps = []
+    monkeypatch.setattr(jobs.backup, "dump", lambda s, folder, now, keep: steps.append("backup") or folder / "x")
+    monkeypatch.setattr(jobs, "_plan_now", lambda c, cal, planning: steps.append("plan") or "summary")
+    monkeypatch.setattr(jobs, "describe", lambda summary: "done")
+    times = (datetime.now().time().replace(microsecond=0),)
+    lines = []
 
-    class Stop(Exception):
-        pass
+    def check():
+        jobs.scheduled_check(settings, _cal(), _planning(), times, BackupSettings(str(tmp_path), 30),
+                             lambda message, error=False: lines.append(message))
 
-    wakes = []
-
-    def fake_sleep(moment):
-        wakes.append(moment)
-        if len(wakes) == 2:
-            raise Stop
-
-    monkeypatch.setattr(cli, "sleep_until", fake_sleep)
-    with pytest.raises(Stop):
-        cli.cmd_serve(None, None, settings)
-    assert runs == [1]                                   # due on the first check, not again on the second
-    assert len(dumps) == 1                               # backed up before the run
+    check()
+    assert steps == ["backup", "plan"]                   # due: back up, then re-plan
     assert db.last_run(conn, trigger="schedule", outcome="ok") is not None
-    assert all(w > datetime.now() + timedelta(hours=23) for w in wakes)   # tomorrow, same time
+    check()
+    assert steps == ["backup", "plan"]                   # not due again until the same time tomorrow
+    assert "Re-planned: done" in lines
 
 
 def test_plan_lock_is_exclusive_across_connections(conn, settings):
@@ -397,36 +390,36 @@ def test_a_report_waits_for_a_running_plan(conn, settings, monkeypatch):
 
 # --- safety: empty database, backups in health ------------------------------------------
 
-def test_planning_refuses_an_empty_database(conn, monkeypatch):
-    from planner import cli
+def test_planning_refuses_an_empty_database(conn):
+    from planner import jobs
     with pytest.raises(ValueError, match="no people and no chores"):
-        cli.check_catalog(conn)
+        jobs.check_catalog(conn)
     with pytest.raises(ValueError, match="right data folder"):
-        cli._run_plan(conn, _planning(), quiet=True)
+        jobs.plan_now(conn, _cal(), _planning(), "manual")
     seed.import_json(conn, SEED)
-    cli.check_catalog(conn)                                            # fine once it has a catalog
+    jobs.check_catalog(conn)                                           # fine once it has a catalog
 
 
 def test_serve_refuses_to_start_on_an_empty_database(conn, settings, monkeypatch):
-    from planner import cli
-    monkeypatch.setattr(cli, "load_plan_times", lambda: (datetime.now().time(),))
-    monkeypatch.setattr(cli, "load_planning_settings", _planning)
-    monkeypatch.setattr(cli, "load_calendar_settings", _cal)
-    monkeypatch.setattr(cli, "load_backup_settings", lambda: None)
+    from planner import daemon
+    monkeypatch.setattr(daemon, "load_plan_times", lambda: (datetime.now().time(),))
+    monkeypatch.setattr(daemon, "load_planning_settings", _planning)
+    monkeypatch.setattr(daemon, "load_calendar_settings", _cal)
+    monkeypatch.setattr(daemon, "load_backup_settings", lambda: None)
     with pytest.raises(ValueError, match="no people and no chores"):
-        cli.cmd_serve(None, None, settings)
+        daemon.serve(settings)
 
 
-def test_health_also_needs_a_recent_backup(conn, monkeypatch, tmp_path, capsys):
-    from planner import cli
+def test_health_also_needs_a_recent_backup(conn, tmp_path):
+    from planner import jobs
     from planner.backup import backup_name
     from planner.config import BackupSettings
     from planner.models import RunRecord
     now = datetime.now()
     db.log_run(conn, RunRecord(now - timedelta(hours=1), now, "schedule", "ok", "ok"))
-    monkeypatch.setattr(cli, "load_backup_settings", lambda: BackupSettings(str(tmp_path), 30))
-    assert cli.cmd_health(conn, None, None) == 1
-    assert "no backup" in capsys.readouterr().out
+    backups = BackupSettings(str(tmp_path), 30)
+    problems, _ = jobs.health(conn, now, backups)
+    assert problems == [f"no backup in {tmp_path} in the last 26 hours"]
     (tmp_path / backup_name(now - timedelta(hours=2))).write_bytes(b"")
-    assert cli.cmd_health(conn, None, None) == 0
-    assert "last backup" in capsys.readouterr().out
+    problems, summary = jobs.health(conn, now, backups)
+    assert problems == [] and "last backup" in summary

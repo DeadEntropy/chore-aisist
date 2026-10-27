@@ -310,7 +310,8 @@ vocabulary for Claude Code.
 | After every `done` / `skip` | The same re-plan, from that moment |
 
 The schedule runs **inside** the app container (so `docker exec` always has a running container to talk to);
-no host cron. Phase 4a (`scheduler.py`, `planner serve`):
+no host cron. Phase 4a (`planner serve`: `daemon.py` runs the loop, `jobs.scheduled_check` does one check, `scheduler.py`
+decides when):
 
 - `PLAN_TIMES` (default `20:00`, comma-separated for more) sets the run times, in local time.
 - A run is **due** when the last successful scheduled run started before the most recent scheduled time. So a run
@@ -386,9 +387,10 @@ no host cron. Phase 4a (`scheduler.py`, `planner serve`):
 | `fitting.py` | Who does what, when, in the free time (pure) | — |
 | `calendars.py` | Read and classify the family calendars; read and write the planner's events in the Chores calendar | Nextcloud |
 | `plans.py` | The saved plan: freeze/unknown rules, reconcile, event UIDs/titles/iCalendar, calendar diff (pure) | — |
-| `jobs.py` | `run_plan` (re-plan from now, save, sync), `report` (done/skip), `dry_run` | the above |
-| `scheduler.py` | When the daily re-plan is due, when to wake up, health (pure); `planner serve` runs the loop | — |
-| `backup.py` | Database dumps (`mariadb-dump`) and pruning old ones | MariaDB, the backup folder |
+| `jobs.py` | `run_plan` (re-plan from now, save, sync), `report` (done/skip), `dry_run`; real runs with the run log (`plan_now`), safety checks, the scheduler's check (`scheduled_check`: back up, then re-plan when due), `health` | the above |
+| `scheduler.py` | When the daily re-plan is due, when to wake up, what counts as healthy (pure) | — |
+| `backup.py` | Database dumps (`mariadb-dump`), listing and pruning them; no schedule knowledge | MariaDB, the backup folder |
+| `daemon.py` | Keeps the scheduler running (`planner serve`): loop, sleep, SIGTERM, log lines | via `jobs` |
 | `weather.py`, `brief.py`, `notify.py` | Phases 4–5 | external APIs |
 
 Only `db.py` contains SQL and only `calendars.py` speaks CalDAV; `scoring.py` and `fitting.py` take plain data and

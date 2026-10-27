@@ -19,7 +19,10 @@ is covered by the `/chores` Claude Code command in the homelab repo, not by this
 
 - `src/planner/db.py` is the **only** module with SQL; `calendars.py` the only one that talks to Nextcloud.
 - `scoring.py`, `availability.py`, `fitting.py`, `plans.py` are **pure** (no database, no network) and tested offline.
-  `jobs.py` wires them to the database and calendars; `cli.py` stays thin.
+  `jobs.py` wires them to the database and calendars (and holds the business operations: real plan runs with the
+  run log, the scheduler's check, health); `cli.py` stays thin (parse, call, print).
+- `scheduler.py` decides *when* (pure); `backup.py` is a tool (dump, list, prune) that knows nothing about the
+  schedule; `daemon.py` only keeps the process alive (loop, sleep, SIGTERM, log lines) and calls `jobs`.
 - The `planned` table is the source of truth; the Chores calendar mirrors it. Only events whose UID ends in
   `@chore-aisist` may ever be deleted.
 - The database is the chore catalog. `tests/fixtures/chores.json` is sample data for the tests only: don't sync

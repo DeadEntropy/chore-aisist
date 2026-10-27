@@ -21,9 +21,11 @@ src/planner/
   fitting.py    who does what, when, in the free time
   calendars.py  reads the family calendars from Nextcloud (CalDAV) → busy time and travel
   plans.py      the saved plan: freeze/unknown rules, re-planning, Chores calendar events
-  jobs.py       ties it together: plan runs, done/skip, calendar sync
-  scheduler.py  when the daily re-plan is due, retries, health
-  backup.py     database dumps before every scheduled run, pruning
+  jobs.py       ties it together: plan runs (with the run log), done/skip, calendar sync, the scheduler's
+                check (back up, then re-plan when due), health
+  scheduler.py  when the daily re-plan is due, retries, what counts as healthy (pure)
+  backup.py     database dumps and pruning (a tool: knows nothing about the schedule)
+  daemon.py     keeps the scheduler running: the loop, sleeping, SIGTERM (`planner serve`)
   cli.py        the `planner` command
   migrations/   schema changes, applied in name order by `planner migrate`
 tests/          pytest; database tests need a throwaway MariaDB (see below)

@@ -1,18 +1,15 @@
 """The `planner` command. Thin wrappers around the other modules."""
 
 import argparse
-import signal
 import sys
-import time as clock
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pymysql
 
-from planner import backup, calendars, db, jobs, scheduler, seed
-from planner.config import (load_backup_settings, load_calendar_settings, load_plan_times, load_planning_settings,
-                            load_settings)
-from planner.models import Chore, RunRecord
+from planner import backup, calendars, daemon, db, jobs, seed
+from planner.config import load_backup_settings, load_calendar_settings, load_planning_settings, load_settings
+from planner.models import Chore
 
 NULLS = {"", "none", "null"}
 TRUE_WORDS = {"1", "true", "yes", "y"}
@@ -187,7 +184,10 @@ def cmd_plan(conn, args, settings):
         if dry_only:
             verb = "works" if len(dry_only) == 1 else "work"
             raise ValueError(f"{', '.join(dry_only)} only {verb} with --dry-run: a real run always plans from now")
-        return run_plan(conn, planning, trigger="manual")
+        summary = jobs.plan_now(conn, load_calendar_settings(), planning, "manual")
+        print_plan(summary.result, summary.result.excluded)
+        print_run(summary, "Saved")
+        return
     start = args.date or date.today()
     events, buffer = [], 0
     cal = None if args.no_calendar else load_calendar_settings()
@@ -196,7 +196,7 @@ def cmd_plan(conn, args, settings):
     elif cal is None:
         print("Calendars not configured (CALDAV_URL not set): only the default chore windows, everyone free.\n")
     else:
-        check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
+        jobs.check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
         first, last = jobs.calendar_range(start, args.weeks)
         try:
             events = calendars.fetch_events(cal, first, last)
@@ -212,59 +212,11 @@ def cmd_plan(conn, args, settings):
         print_plan(result, new)
 
 
-def run_plan(conn, planning, quiet: bool = False, trigger: str = "manual") -> None:
-    """The real run: re-plan from now, save, and update the Chores calendar. Every run, failed or not, is recorded
-    in the run log (the scheduler reads it to catch up and retry)."""
-    started = datetime.now()
-    try:
-        message = _run_plan(conn, planning, quiet)
-    except Exception as exc:
-        conn.rollback()
-        _log_run(conn, RunRecord(started, datetime.now(), trigger, "error", str(exc)))
-        raise
-    _log_run(conn, RunRecord(started, datetime.now(), trigger, "ok", message))
-
-
-def _log_run(conn, run: RunRecord) -> None:
-    try:
-        db.log_run(conn, run)
-        conn.commit()
-    except pymysql.err.MySQLError as exc:          # the run itself matters more than its log entry
-        print(f"warning: couldn't write the run log ({exc})", file=sys.stderr)
-
-
-def _run_plan(conn, planning, quiet: bool) -> str:
-    check_catalog(conn)
-    cal = load_calendar_settings()
-    if cal is None:
-        raise ValueError("Writing the plan needs the calendars (CALDAV_URL not set); use --dry-run to only print it")
-    check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
-    now = datetime.now()
-    events = fetch_calendar_events(cal, *jobs.calendar_range(now.date(), 1))
-    try:
-        summary = jobs.run_plan(conn, cal, planning, now, events)
-    except jobs.CalendarSyncError as exc:
-        raise ValueError(f"Plan saved, but couldn't update the Chores calendar ({exc}); "
-                         "run `planner plan` again to retry") from exc
-    if not quiet:
-        print_plan(summary.result, summary.result.excluded)
-    c = summary.changes
-    message = (f"{len(c.add)} added, {len(c.move)} moved, {len(c.remove)} removed"
-               f"{f', {len(summary.unknown)} past chores marked unknown' if summary.unknown else ''}."
-               f" Chores calendar: {summary.calendar_put} events written, {summary.calendar_deleted} deleted.")
-    print(f"{'Re-planned' if quiet else 'Saved'}: {message}")
-    if c.dropped:
+def print_run(summary, verb: str) -> None:
+    print(f"{verb}: {jobs.describe(summary)}")
+    if summary.changes.dropped:
         print("Not planned again today (already done or skipped that day): "
-              + ", ".join(i.chore.id for i in c.dropped))
-    return message
-
-
-def fetch_calendar_events(cal, first: date, last: date):
-    try:
-        return calendars.fetch_events(cal, first, last)
-    except Exception as exc:          # network, TLS, auth: report it plainly, don't plan on wrong data
-        raise ValueError(f"Couldn't read the calendars ({type(exc).__name__}: {exc}). "
-                         "Use --dry-run --no-calendar to plan without them.") from exc
+              + ", ".join(i.chore.id for i in summary.changes.dropped))
 
 
 def cmd_report(conn, args, settings):
@@ -282,7 +234,7 @@ def cmd_report(conn, args, settings):
     if cal is None:
         print("Calendars not configured: the Chores calendar wasn't updated or re-planned.")
         return
-    run_plan(conn, load_planning_settings(), quiet=True, trigger="report")   # reporting re-plans from now
+    print_run(jobs.plan_now(conn, cal, load_planning_settings(), "report"), "Re-planned")   # reporting re-plans
 
 
 def cmd_status(conn, args, settings):
@@ -314,49 +266,7 @@ def cmd_status(conn, args, settings):
 
 
 def cmd_serve(conn, args, settings):
-    """Re-plan at every PLAN_TIMES moment, forever. A run missed while the container was down is caught up once on
-    start; a failed run is retried every 15 minutes until it succeeds or the next scheduled time comes."""
-    times = load_plan_times()
-    planning = load_planning_settings()
-    if load_calendar_settings() is None:           # fail at start, not at 20:00, if the settings are wrong
-        raise ValueError("The scheduler needs the calendars to write the plan (CALDAV_URL not set)")
-    backups = load_backup_settings()
-    with db.connect(settings) as c:                # refuse to start on an empty (wrong or freshly created) database
-        check_catalog(c)
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))      # `docker stop`: exit at once (we're PID 1)
-    log(f"Scheduler started: re-plans every day at {', '.join(t.strftime('%H:%M') for t in times)}; "
-        + (f"backs up to {backups.folder} first (kept {backups.keep_days} days)" if backups
-           else "no backups (BACKUP_DIR not set)"))
-    while True:
-        failed = False
-        try:
-            with db.connect(settings) as c:           # a fresh connection per check: a day-old one would time out
-                last = db.last_run(c, trigger="schedule", outcome="ok")
-                now = datetime.now()
-                if scheduler.is_due(now, times, last.started_at if last else None):
-                    if backups:
-                        scheduled_backup(settings, backups, now, times)
-                    log("Scheduled re-plan")
-                    run_plan(c, planning, quiet=True, trigger="schedule")
-        except Exception as exc:                      # log and carry on: the next run starts from the saved plan
-            failed = True
-            log(f"Run failed: {type(exc).__name__}: {exc}", error=True)
-        wake = scheduler.next_wake(datetime.now(), times, failed)
-        log(f"Next check {wake:%a %d %b %H:%M}")
-        sleep_until(wake)
-
-
-def scheduled_backup(settings, backups, now: datetime, times) -> None:
-    """Back up before a scheduled run, unless a backup was already made since the last scheduled time (a retried
-    run doesn't back up again). A failed backup is logged; the re-plan still runs (it never deletes chores or history)."""
-    folder = Path(backups.folder)
-    made = backup.latest(folder)
-    if made is not None and made >= scheduler.latest_scheduled(now, times).replace(second=0):
-        return
-    try:
-        log(f"Backed up to {backup.dump(settings, folder, now, backups.keep_days)}")
-    except Exception as exc:
-        log(f"Backup failed: {type(exc).__name__}: {exc}", error=True)
+    daemon.serve(settings)
 
 
 def cmd_backup(conn, args, settings):
@@ -367,50 +277,9 @@ def cmd_backup(conn, args, settings):
 
 
 def cmd_health(conn, args, settings):
-    now = datetime.now()
-    problems = []
-    last = db.last_run(conn, outcome="ok")
-    if not scheduler.is_healthy(now, last.started_at if last else None):
-        failed = db.last_run(conn)
-        problems.append("no successful run in the last 26 hours"
-                        + (f" (last attempt {failed.started_at:%a %d %b %H:%M}: {failed.message})" if failed else ""))
-    backups = load_backup_settings()
-    made = backup.latest(Path(backups.folder)) if backups else None
-    if backups and not scheduler.is_healthy(now, made):
-        problems.append(f"no backup in {backups.folder} in the last 26 hours")
-    if problems:
-        print("unhealthy: " + "; ".join(problems))
-        return 1
-    print(f"ok: last successful run {last.started_at:%a %d %b %H:%M} ({last.trigger})"
-          + (f", last backup {made:%a %d %b %H:%M}" if made else ""))
-    return 0
-
-
-def check_catalog(conn) -> None:
-    """Stop if the database has no people or no chores: it's the wrong or a freshly created database (e.g. the
-    data folder wasn't mounted), and planning on it would empty the Chores calendar."""
-    missing = [what for what, rows in (("people", db.get_people(conn)), ("chores", db.get_chores(conn))) if not rows]
-    if missing:
-        raise ValueError(f"The database has no {' and no '.join(missing)}: is the right data folder mounted? "
-                         "Refusing to plan (it would empty the Chores calendar).")
-
-
-def sleep_until(moment: datetime) -> None:
-    """Sleep in short steps, so a clock change (or a suspended host) doesn't make us oversleep."""
-    while (left := (moment - datetime.now()).total_seconds()) > 0:
-        clock.sleep(min(left, 300))
-
-
-def log(message: str, error: bool = False) -> None:
-    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}", file=sys.stderr if error else sys.stdout, flush=True)
-
-
-def check_calendar_people(calendar_people: set[str], known: set[str]) -> None:
-    """Stop if BUSY_CALENDARS names someone who isn't a person in the database: their events would be ignored."""
-    unknown = sorted(calendar_people - known)
-    if unknown:
-        raise ValueError(f"BUSY_CALENDARS names unknown people: {', '.join(unknown)} "
-                         f"(known: {', '.join(sorted(known))})")
+    problems, summary = jobs.health(conn, datetime.now(), load_backup_settings())
+    print(("unhealthy: " + "; ".join(problems)) if problems else f"ok: {summary}")
+    return 1 if problems else 0
 
 
 EVENT_LABELS = {"busy": "Busy", "away": "Away", "no_chores": "No chores", "extra_day": "Day off",
