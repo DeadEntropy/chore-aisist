@@ -23,7 +23,7 @@ class WeatherSettings:
     latitude: float                            # WEATHER_LATITUDE / WEATHER_LONGITUDE: where the chores happen
     longitude: float
     timezone: str                              # forecast hours in local time (PLANNER_TIMEZONE)
-    days: int = 3                              # WEATHER_DAYS: forecast used for today and this many days after
+    days: int = 10                             # WEATHER_DAYS: forecast used for today and this many days after
     models: tuple[str, ...] = ("ecmwf_ifs025", "best_match")   # WEATHER_MODELS: Open-Meteo models, preferred first
     max_rain_percent: float = 20               # MAX_RAIN_PERCENT: average chance of rain over the chore
     max_feels_like_c: float = 35               # MAX_FEELS_LIKE_C: hottest hour of the chore
@@ -98,7 +98,7 @@ def load_weather_settings() -> WeatherSettings | None:
     latitude, longitude = float(lat), float(lon)
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
         raise ValueError(f"WEATHER_LATITUDE/WEATHER_LONGITUDE out of range: {latitude}, {longitude}")
-    days = int(os.environ.get("WEATHER_DAYS", "3"))
+    days = int(os.environ.get("WEATHER_DAYS", "10"))
     if not 0 <= days <= 15:
         raise ValueError(f"WEATHER_DAYS must be 0 to 15, got {days}")
     limits = {var: float(os.environ.get(var, default)) for var, default in
