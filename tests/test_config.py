@@ -77,3 +77,34 @@ def test_keywords_from_env(env):
     cal = config.load_calendar_settings()
     assert cal.keywords["extra_day"] == ("day off", "vacation day")
     assert cal.keywords["extra_time"] == ("bricolage",) and cal.keywords["away"] == ("travel", "trip", "away")
+
+
+WEATHER_KEYS = ["WEATHER_LATITUDE", "WEATHER_LONGITUDE", "WEATHER_DAYS", "MAX_RAIN_PERCENT", "MAX_FEELS_LIKE_C",
+                "MAX_UV_INDEX", "PLANNER_TIMEZONE", "WEATHER_MODELS"]
+
+
+@pytest.fixture
+def weather_env(env, monkeypatch):
+    for key in WEATHER_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    return env
+
+
+def test_weather_is_optional(weather_env):
+    assert config.load_weather_settings() is None
+
+
+def test_weather_settings_defaults(weather_env):
+    weather_env(WEATHER_LATITUDE="10.5", WEATHER_LONGITUDE="-20.25")
+    w = config.load_weather_settings()
+    assert w.models == ("ecmwf_ifs025", "best_match")
+    assert (w.latitude, w.longitude, w.days, w.max_rain_percent, w.max_feels_like_c, w.max_uv_index) == \
+        (10.5, -20.25, 3, 20, 35, 7)
+
+
+@pytest.mark.parametrize("values", [{"WEATHER_LATITUDE": "10"}, {"WEATHER_LATITUDE": "95", "WEATHER_LONGITUDE": "0"},
+                                    {"WEATHER_LATITUDE": "1", "WEATHER_LONGITUDE": "1", "WEATHER_DAYS": "-1"}])
+def test_bad_weather_settings(weather_env, values):
+    weather_env(**values)
+    with pytest.raises(ValueError):
+        config.load_weather_settings()

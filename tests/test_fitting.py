@@ -138,3 +138,46 @@ def test_a_quarter_hour_start_must_still_fit():
     plan = plan_period([chore("hour", 1, "nicolas")], PEOPLE, DAYS,
                        free(nicolas_sat=[(8 * 60 + 10, 9 * 60 + 10)], nicolas_sun=[]))
     assert plan.items == [] and plan.unplanned[0][1] == "no free slot long enough"   # 08:15–09:15 doesn't fit
+
+
+def outdoor(id, hours, who, score=1.0):
+    s = chore(id, hours, who, score)
+    s.chore.outdoor = True
+    return s
+
+
+def rainy(*spans):
+    """A weather rule: rain on (day, 'HH:MM', 'HH:MM') spans, dry elsewhere."""
+    def to_min(hhmm):
+        h, m = map(int, hhmm.split(":"))
+        return h * 60 + m
+    wet = [(d, to_min(a), to_min(b)) for d, a, b in spans]
+    return lambda day, start, end: next(("rain 75%" for d, a, b in wet if d == day and start < b and end > a), None)
+
+
+def test_outdoor_chore_waits_for_a_dry_time_the_same_day():
+    plan = plan_period([outdoor("mulch", 4, "both")], PEOPLE, DAYS, free(), weather=rainy((SAT, "08:00", "11:00")))
+    assert plan.items[0].start == at(SAT, "11:00")
+
+
+def test_outdoor_chore_moves_to_a_dry_day():
+    plan = plan_period([outdoor("mulch", 4, "both")], PEOPLE, DAYS, free(), weather=rainy((SAT, "08:00", "18:00")))
+    assert plan.items[0].start == at(SUN, "08:00")
+
+
+def test_outdoor_chore_not_planned_when_every_free_time_is_wet():
+    plan = plan_period([outdoor("mulch", 4, "both")], PEOPLE, DAYS, free(),
+                       weather=rainy((SAT, "08:00", "18:00"), (SUN, "08:00", "18:00")))
+    assert plan.items == []
+    assert plan.unplanned[0][1] == "weather whenever it would fit (Sat 31 Oct 08:00: rain 75%)"
+
+
+def test_indoor_chores_ignore_the_weather():
+    plan = plan_period([chore("clean", 2, "anna")], PEOPLE, DAYS, free(), weather=rainy((SAT, "08:00", "18:00")))
+    assert plan.items[0].start == at(SAT, "08:00")
+
+
+def test_too_short_a_slot_is_not_blamed_on_the_weather():
+    plan = plan_period([outdoor("mulch", 4, "nicolas")], PEOPLE, DAYS,
+                       free(nicolas_sat=[(8 * 60, 10 * 60)], nicolas_sun=[]), weather=rainy((SAT, "08:00", "18:00")))
+    assert plan.unplanned[0][1] == "no free slot long enough"

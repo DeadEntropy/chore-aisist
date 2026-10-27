@@ -205,8 +205,13 @@ def cmd_plan(conn, args, settings):
                              "Use --no-calendar to plan without them.") from exc
         buffer = cal.buffer_minutes
 
+    forecast, weather_error = jobs.fetch_weather(planning, date.today())
+    if planning.weather is None:
+        print("Weather not configured (WEATHER_LATITUDE not set): outdoor chores planned whatever the weather.\n")
+    elif weather_error:
+        print("Weather forecast unavailable: outdoor chores planned whatever the weather.\n")
     shown: set[tuple[str, str]] = set()
-    for result in jobs.dry_run(conn, start, args.weeks, events, buffer, planning, datetime.now()):
+    for result in jobs.dry_run(conn, start, args.weeks, events, buffer, planning, datetime.now(), forecast):
         new = [(c, why) for c, why in result.excluded if (c.id, why) not in shown]   # each reason once
         shown.update((c.id, why) for c, why in new)
         print_plan(result, new)
@@ -304,6 +309,8 @@ def print_plan(result, excluded) -> None:
         else:
             when = f"{e.start:%a %d %b %H:%M} – {e.end:%a %d %b %H:%M}"
         print(f"  {label}: {when}  {e.summary}  ({who})")
+    for day, outlook in result.weather:
+        print(f"  Weather: {day:%a %d %b}  {outlook}")
     if result.blocked:
         print("  Nobody has free chore time in this period: nothing planned")
         _print_excluded(excluded)

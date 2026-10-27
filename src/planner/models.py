@@ -55,6 +55,14 @@ class CalEvent:
 
 
 @dataclass
+class HourWeather:
+    """The forecast for one hour (local time), from `weather`. None where the forecast has no value."""
+    rain_percent: float | None = None      # chance of rain
+    feels_like_c: float | None = None      # apparent temperature
+    uv_index: float | None = None
+
+
+@dataclass
 class Busy:
     """A span of time when a person can't do chores (from their calendars)."""
     person_id: str

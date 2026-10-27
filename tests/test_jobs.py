@@ -212,3 +212,62 @@ def test_an_in_progress_need_still_follows_the_recurring_needs_rule():
                            in_progress=[doing])
     item, = results[0].plan.items
     assert item.chore.id == "mulch" and item.start >= datetime(2026, 10, 31, 12)
+
+
+# --- weather ------------------------------------------------------------------
+
+from planner import jobs, weather                                    # noqa: E402
+from planner.config import WeatherSettings                           # noqa: E402
+from planner.models import HourWeather                               # noqa: E402
+
+WEATHER = WeatherSettings(0.0, 0.0, "America/New_York")
+WITH_WEATHER = PlanningSettings(PLANNING.windows, PLANNING.extra_day_window, WEATHER)
+
+
+def wet_sunday(rain=75):
+    """Dry Saturday, `rain`% all Sunday (8:00-18:00)."""
+    out = {}
+    for day, p in ((SAT, 0), (SAT + timedelta(days=1), rain)):
+        for h in range(8, 18):
+            out[datetime.combine(day, datetime.min.time()) + timedelta(hours=h)] = HourWeather(p, 30.0, 4)
+    return out
+
+
+def mulch(id, hours=4):
+    c = one_off(id, hours=hours, who="both")
+    c.outdoor = True
+    return c
+
+
+def test_a_wet_sunday_keeps_the_mulching_off_it():
+    sun = SAT + timedelta(days=1)
+    chores = [mulch("remulch-back"), mulch("remulch-front"), mulch("remulch-side")]
+    without = plan_periods(chores, PERSONS, {}, START, 1, [], 30, WITH_WEATHER)[0]
+    assert sun in {i.start.date() for i in without.plan.items}           # no forecast: Sunday is used
+
+    result = plan_periods(chores, PERSONS, {}, START, 1, [], 30, WITH_WEATHER, forecast=wet_sunday())[0]
+    assert {i.start.date() for i in result.plan.items} == {SAT}           # two 4 h jobs fit on Saturday
+    assert [why for _, why in result.plan.unplanned] == ["weather whenever it would fit (Sun 01 Nov 08:00: rain 75%)"]
+    assert result.weather == [(SAT, "rain 0%, feels like up to 30°C, UV up to 4"),
+                              (sun, "rain 75%, feels like up to 30°C, UV up to 4")]
+
+
+def test_the_forecast_is_ignored_without_weather_settings():
+    result = plan_periods([mulch("m")], PERSONS, {}, SAT + timedelta(days=1), 1, [], 30, PLANNING,
+                          forecast=wet_sunday())[0]
+    assert result.plan.items and result.weather == []
+
+
+def test_an_unreadable_forecast_plans_without_it(monkeypatch, capsys):
+    def broken(settings, today):
+        raise TimeoutError("timed out")
+    monkeypatch.setattr(weather, "fetch_forecast", broken)
+    assert jobs.fetch_weather(WITH_WEATHER, SAT) == (None, "TimeoutError: timed out")
+    assert "couldn't read the weather forecast" in capsys.readouterr().err
+    assert jobs.fetch_weather(PLANNING, SAT) == (None, None)            # not configured: no error
+
+
+def test_the_run_log_says_when_the_forecast_was_missing():
+    from planner.plans import Changes
+    summary = jobs.RunSummary(None, Changes(), [], weather_error="TimeoutError: timed out")
+    assert jobs.describe(summary).endswith("Weather forecast unavailable (TimeoutError: timed out): planned without it.")

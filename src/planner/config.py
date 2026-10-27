@@ -18,9 +18,23 @@ KEYWORD_SETTINGS = {                 # event kind → (environment variable, def
 
 
 @dataclass(frozen=True)
+class WeatherSettings:
+    latitude: float                            # WEATHER_LATITUDE / WEATHER_LONGITUDE: where the chores happen
+    longitude: float
+    timezone: str                              # forecast hours in local time (PLANNER_TIMEZONE)
+    days: int = 3                              # WEATHER_DAYS: forecast used for today and this many days after
+    models: tuple[str, ...] = ("ecmwf_ifs025", "best_match")   # WEATHER_MODELS: Open-Meteo models, preferred first
+    max_rain_percent: float = 20               # MAX_RAIN_PERCENT: average chance of rain over the chore
+    max_feels_like_c: float = 35               # MAX_FEELS_LIKE_C: hottest hour of the chore
+    max_uv_index: float = 7                    # MAX_UV_INDEX: sunniest hour of the chore
+    timeout_seconds: int = 15
+
+
+@dataclass(frozen=True)
 class PlanningSettings:
     windows: Windows                           # default chore windows per weekday (CHORE_WINDOWS)
     extra_day_window: tuple[int, int]          # chore window on a "Day off" (EXTRA_DAY_WINDOW)
+    weather: WeatherSettings | None = None     # None: outdoor chores are planned whatever the weather
 
 
 @dataclass(frozen=True)
@@ -69,6 +83,33 @@ def load_planning_settings() -> PlanningSettings:
     return PlanningSettings(
         windows=parse_windows(os.environ.get("CHORE_WINDOWS", "sat 08:00-18:00; sun 08:00-18:00")),
         extra_day_window=parse_window(os.environ.get("EXTRA_DAY_WINDOW", "08:00-18:00")),
+        weather=load_weather_settings(),
+    )
+
+
+def load_weather_settings() -> WeatherSettings | None:
+    """Weather settings, or None when WEATHER_LATITUDE and WEATHER_LONGITUDE aren't set (no weather)."""
+    lat, lon = os.environ.get("WEATHER_LATITUDE", "").strip(), os.environ.get("WEATHER_LONGITUDE", "").strip()
+    if not lat and not lon:
+        return None
+    if not lat or not lon:
+        raise ValueError("Set both WEATHER_LATITUDE and WEATHER_LONGITUDE, or neither (no weather)")
+    latitude, longitude = float(lat), float(lon)
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        raise ValueError(f"WEATHER_LATITUDE/WEATHER_LONGITUDE out of range: {latitude}, {longitude}")
+    days = int(os.environ.get("WEATHER_DAYS", "3"))
+    if not 0 <= days <= 15:
+        raise ValueError(f"WEATHER_DAYS must be 0 to 15, got {days}")
+    return WeatherSettings(
+        latitude=latitude,
+        longitude=longitude,
+        timezone=os.environ.get("PLANNER_TIMEZONE", "America/New_York"),
+        days=days,
+        models=tuple(m.strip() for m in os.environ.get("WEATHER_MODELS", "ecmwf_ifs025,best_match").split(",")
+                     if m.strip()) or ("best_match",),
+        max_rain_percent=float(os.environ.get("MAX_RAIN_PERCENT", "20")),
+        max_feels_like_c=float(os.environ.get("MAX_FEELS_LIKE_C", "35")),
+        max_uv_index=float(os.environ.get("MAX_UV_INDEX", "7")),
     )
 
 
