@@ -30,7 +30,8 @@ def test_write_read_delete_one_far_future_event():
     settings = load_calendar_settings()
     day = date(2030, 1, 5)
     event = EventData("chore-live-test-2030-01-05@chore-aisist", "🧹 Live test (Nicolas)",
-                      datetime(2030, 1, 5, 9), datetime(2030, 1, 5, 10))
+                      datetime(2030, 1, 5, 9), datetime(2030, 1, 5, 10),
+                      description="Brown mulch, 70 bags; commas, semicolons\nhttps://example.com/p/1\n\nID: live-test")
     try:
         write_chore_events(settings, [event], [])
         assert chore_events(settings, day, day + timedelta(days=1)).get(event.uid) == event

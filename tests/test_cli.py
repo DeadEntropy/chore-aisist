@@ -86,3 +86,8 @@ def test_backup_command_reports_file_errors_cleanly(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.backup, "dump", unwritable)
     with pytest.raises(ValueError, match="Backup failed: PermissionError"):
         cli.cmd_backup(None, None, None)
+
+
+def test_parse_description():
+    assert parse_fields(["description=Brown mulch\\n70 bags"]) == {"description": "Brown mulch\n70 bags"}
+    assert parse_fields(["description=none"]) == {"description": None}

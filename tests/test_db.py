@@ -174,6 +174,20 @@ def test_not_before_round_trip(conn, tmp_path):
     assert db.get_chore(conn, "paint-wall").not_before == date(2026, 12, 1)
 
 
+def test_description_round_trip(conn, tmp_path):
+    seed.import_json(conn, SEED)
+    db.update_chore(conn, "paint-wall", {"description": "Greek Villa, eggshell\nhttps://example.com/paint"})
+    assert db.get_chore(conn, "paint-wall").description == "Greek Villa, eggshell\nhttps://example.com/paint"
+    out = tmp_path / "export.json"
+    seed.export_json(conn, out)
+    exported = {c["id"]: c for c in json.loads(out.read_text())["chores"]}
+    assert exported["paint-wall"]["description"].startswith("Greek Villa")
+    assert "description" not in exported["buy-caulk"]
+    db.update_chore(conn, "paint-wall", {"description": None})
+    seed.import_json(conn, out, update=True)
+    assert db.get_chore(conn, "paint-wall").description.startswith("Greek Villa")
+
+
 # --- phase 3: saved plan, Chores calendar, done/skip ------------------------------------
 
 class FakeChoresCalendar:
@@ -525,3 +539,37 @@ def test_reporting_a_missed_chore_picks_the_unknown_item_and_drops_the_copy(conn
     left = [r for r in db.planned_between(conn, datetime(2026, 10, 31), datetime(2026, 11, 1))
             if r.chore_id == missed.chore_id and r.status == "open"]
     assert left == []                                                      # the same-day copy is gone
+
+
+def test_descriptions_and_forecasts_reach_the_events(conn, monkeypatch):
+    from planner import jobs
+    from planner.config import PlanningSettings, WeatherSettings
+    from planner.models import HourWeather
+    fake = FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    base = _planning()
+    planning = PlanningSettings(base.windows, base.extra_day_window, WeatherSettings(0.0, 0.0, "America/New_York"))
+    forecast = {datetime(2026, 10, 30) + timedelta(hours=h): HourWeather(10, 28.0, 3) for h in range(24 * 7)}
+    thursday = datetime(2026, 10, 29, 20)
+
+    jobs.run_plan(conn, _cal(), planning, thursday, [], forecast)
+    saved = db.planned_between(conn, datetime(2026, 10, 30), datetime(2026, 11, 6))
+    outdoor = {c.id for c in db.get_chores(conn) if c.outdoor}
+    out_rec = next(r for r in saved if r.chore_id in outdoor)
+    in_rec = next(r for r in saved if r.chore_id not in outdoor)
+    assert out_rec.weather == "rain 10%, feels like up to 28°C, UV up to 3" and in_rec.weather is None
+    assert fake.events[out_rec.uid].description == f"Forecast: {out_rec.weather}\nID: {out_rec.chore_id}"
+    assert fake.events[in_rec.uid].description == f"ID: {in_rec.chore_id}"
+
+    again = jobs.run_plan(conn, _cal(), planning, thursday, [], forecast)     # same forecast: nothing rewritten
+    assert again.calendar_put == 0
+
+    wetter = {k: HourWeather(15, v.feels_like_c, v.uv_index) for k, v in forecast.items()}
+    changed = jobs.run_plan(conn, _cal(), planning, thursday, [], wetter)    # new numbers: outdoor events rewritten
+    assert fake.events[out_rec.uid].description.startswith("Forecast: rain 15%")
+    assert changed.calendar_put == len([r for r in saved if r.chore_id in outdoor])
+
+    db.update_chore(conn, in_rec.chore_id, {"description": "Use the blue toolbox"})
+    conn.commit()
+    written, _ = jobs.refresh_calendar(conn, _cal(), date(2026, 10, 29))
+    assert written >= 1 and fake.events[in_rec.uid].description == f"Use the blue toolbox\n\nID: {in_rec.chore_id}"

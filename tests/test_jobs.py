@@ -298,3 +298,31 @@ def test_the_run_log_says_when_the_forecast_was_missing():
     from planner.plans import Changes
     summary = jobs.RunSummary(None, Changes(), [], weather_error="TimeoutError: timed out")
     assert jobs.describe(summary).endswith("Weather forecast unavailable (TimeoutError: timed out): planned without it.")
+
+
+def test_outdoor_items_get_the_forecast_over_their_time():
+    from planner.models import PlannedRecord
+    from planner.plans import Changes
+    sun = SAT + timedelta(days=1)
+    now = datetime.combine(SAT - timedelta(days=1), datetime.min.time())
+    kept = PlannedRecord("mulch", ["nicolas"], datetime.combine(sun, datetime.min.time()) + timedelta(hours=8),
+                         datetime.combine(sun, datetime.min.time()) + timedelta(hours=10), "k@chore-aisist")
+    same = PlannedRecord("weed", ["nicolas"], kept.start, kept.end, "s@chore-aisist",
+                         weather="rain 75%, feels like up to 30°C, UV up to 4")
+    indoor = PlannedRecord("clean", ["anna"], kept.start, kept.end, "i@chore-aisist", weather="stale")
+    new = PlannedRecord("trim", ["anna"], kept.start - timedelta(days=1), kept.end - timedelta(days=1), "n@chore-aisist")
+    restamped = jobs.stamp_weather([kept, same, indoor], Changes(add=[new]), now, {"mulch", "weed", "trim"},
+                                   wet_sunday())
+    assert kept.weather == "rain 75%, feels like up to 30°C, UV up to 4"
+    assert new.weather == "rain 0%, feels like up to 30°C, UV up to 4"          # added items: set in place
+    assert indoor.weather is None
+    assert {r.uid for r in restamped} == {"k@chore-aisist", "i@chore-aisist"}   # only kept items whose text changed
+
+
+def test_without_a_forecast_items_keep_their_text():
+    from planner.models import PlannedRecord
+    from planner.plans import Changes
+    r = PlannedRecord("mulch", ["nicolas"], datetime(2026, 11, 1, 8), datetime(2026, 11, 1, 10), "k@chore-aisist",
+                      weather="rain 10%")
+    assert jobs.stamp_weather([r], Changes(), datetime(2026, 10, 30), {"mulch"}, None) == []
+    assert r.weather == "rain 10%"

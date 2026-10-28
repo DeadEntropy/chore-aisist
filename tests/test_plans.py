@@ -118,3 +118,30 @@ def test_a_past_unreported_item_stays_and_a_same_day_copy_is_new():
     assert all(r.uid not in {uid("weed", SAT), uid("trim", SAT)} for r in ch.add)
     assert ch.move == [] and ch.remove == []                                # the 08:00/09:00 items stay put
     assert [i.chore.id for i in ch.dropped] == ["hedge"]                    # reported that day: not planned again
+
+
+def test_event_body_has_description_forecast_and_id():
+    from planner.plans import event_body
+    assert event_body("order-mulch", "Brown mulch, 70 bags\nhttps://example.com/p/1", "rain 10%") == \
+        "Brown mulch, 70 bags\nhttps://example.com/p/1\n\nForecast: rain 10%\nID: order-mulch"
+    assert event_body("fix-door", None, None) == "ID: fix-door"
+    assert event_body("fix-door", "  ", None) == "ID: fix-door"
+
+
+def test_description_and_forecast_go_in_the_event_and_read_back():
+    r = rec("mow", SAT, 9)
+    r.weather = "rain 12-26%, feels like up to 31°C, UV up to 6"
+    event = desired_events([r], {"mow": "Mow the lawn"}, 30, {"mow": "Front and back; bag the clippings"})[r.uid]
+    assert event.description == ("Front and back; bag the clippings\n\n"
+                                 "Forecast: rain 12-26%, feels like up to 31°C, UV up to 6\nID: mow")
+    ev = icalendar.Calendar.from_ical(build_ics(event, TZ)).walk("VEVENT")[0]
+    assert event_from_component(ev, TZ) == event
+
+
+def test_a_changed_description_rewrites_the_event_and_an_unchanged_one_does_not():
+    records = [rec("mow", SAT, 9)]
+    before = desired_events(records, {}, 30, {"mow": "Front only"})
+    assert calendar_diff(before, before) == ([], [])
+    after = desired_events(records, {}, 30, {"mow": "Front and back"})
+    put, delete = calendar_diff(after, before)
+    assert [e.description.splitlines()[0] for e in put] == ["Front and back"] and delete == []

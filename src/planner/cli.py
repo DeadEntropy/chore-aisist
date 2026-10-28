@@ -53,12 +53,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true", help="include retired chores")
     p.set_defaults(func=cmd_chore_list)
 
+    p = chore.add_parser("show", help="everything about one chore, with its description")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_chore_show)
+
     p = chore.add_parser("add", help="add a chore: planner chore add <id> name=... category=... type=...")
     p.add_argument("id")
     p.add_argument("fields", nargs="+", metavar="key=value")
     p.set_defaults(func=cmd_chore_add)
 
-    p = chore.add_parser("set", help="edit a chore: planner chore set <id> duration_h=3 needs=buy-caulk not_before=2026-12-01")
+    p = chore.add_parser("set", help="edit a chore: planner chore set <id> duration_h=3 needs=buy-caulk "
+                                     "description=\"Brown mulch, 70 bags\"")
     p.add_argument("id")
     p.add_argument("fields", nargs="+", metavar="key=value")
     p.set_defaults(func=cmd_chore_set)
@@ -117,14 +122,14 @@ def cmd_export(conn, args, settings):
 def cmd_chore_list(conn, args, settings):
     done = db.done_chore_ids(conn)
     chores = db.get_chores(conn, include_inactive=args.all)
-    rows = [["ID", "TYPE", "EVERY (DAYS)", "HOURS", "PRIO", "WHO", "OUT", "NEEDS", "FROM", "STATUS"]]
+    rows = [["ID", "TYPE", "EVERY (DAYS)", "HOURS", "PRIO", "WHO", "OUT", "NEEDS", "FROM", "DESC", "STATUS"]]
     for c in chores:
         every = (f"{c.interval_min_days}-{c.interval_target_days}-{c.interval_max_days}"
                  if c.interval_min_days is not None else "")
         status = "done" if c.type == "one_off" and c.id in done else ("retired" if not c.active else "")
         rows.append([c.id, c.type, every, _fmt(c.duration_h), _fmt(c.priority), c.assignee or "",
                      "yes" if c.outdoor else "", ",".join(c.needs),
-                     c.not_before.isoformat() if c.not_before else "", status])
+                     c.not_before.isoformat() if c.not_before else "", "yes" if c.description else "", status])
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
         print("  ".join(v.ljust(w) for v, w in zip(r, widths)).rstrip())
@@ -152,6 +157,37 @@ def cmd_chore_set(conn, args, settings):
         db.set_needs(conn, args.id, fields.pop("needs"))
     db.update_chore(conn, args.id, fields)
     print(f"Updated {args.id}")
+    if {"name", "description"} & set(fields):                # shown in its events: update them now
+        conn.commit()
+        _refresh_calendar(conn)
+
+
+def _refresh_calendar(conn) -> None:
+    cal = load_calendar_settings()
+    if cal is None:
+        return
+    try:
+        written, _ = jobs.refresh_calendar(conn, cal, date.today())
+    except jobs.CalendarSyncError as exc:
+        print(f"Saved, but couldn't update the Chores calendar ({exc}); the next re-plan will.")
+        return
+    print(f"Chores calendar: {written} events updated.")
+
+
+def cmd_chore_show(conn, args, settings):
+    c = db.get_chore(conn, args.id)
+    if c is None:
+        raise ValueError(f"No chore with id '{args.id}' (see `planner chore list`)")
+    every = (f"{c.interval_min_days}-{c.interval_target_days}-{c.interval_max_days} days"
+             if c.interval_min_days is not None else "")
+    for label, value in (("Name", c.name), ("Type", f"{c.type}, {c.category}" + (", outdoor" if c.outdoor else "")),
+                         ("Every", every), ("Hours", _fmt(c.duration_h)), ("Priority", _fmt(c.priority)),
+                         ("Who", c.assignee or ""), ("Needs", ", ".join(c.needs)),
+                         ("Not before", c.not_before.isoformat() if c.not_before else ""),
+                         ("Active", "" if c.active else "no (retired)")):
+        if value:
+            print(f"{label + ':':<12}{value}")
+    print("Description:" + ("\n  " + c.description.replace("\n", "\n  ") if c.description else " (none)"))
 
 
 def cmd_calendars(conn, args, settings):
@@ -386,6 +422,8 @@ def parse_fields(pairs: list[str]) -> dict:
             out[key] = None if empty else date.fromisoformat(value)
         elif key in ("name", "category", "type", "assignee"):
             out[key] = None if empty else value
+        elif key == "description":                             # "\n" in the text starts a new line
+            out[key] = None if empty else value.replace("\\n", "\n")
         else:
             raise ValueError(f"Unknown field '{key}'")
     return out
