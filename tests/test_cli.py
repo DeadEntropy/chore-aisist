@@ -91,3 +91,16 @@ def test_backup_command_reports_file_errors_cleanly(monkeypatch, tmp_path):
 def test_parse_description():
     assert parse_fields(["description=Brown mulch\\n70 bags"]) == {"description": "Brown mulch\n70 bags"}
     assert parse_fields(["description=none"]) == {"description": None}
+
+
+def test_a_failed_calendar_refresh_after_an_edit_is_an_error(monkeypatch):
+    import pytest
+
+    from planner import cli
+
+    def fail(conn, cal, today):
+        raise cli.jobs.CalendarSyncError("ConnectionError: down")
+    monkeypatch.setattr(cli, "load_calendar_settings", lambda: object())
+    monkeypatch.setattr(cli.jobs, "refresh_calendar", fail)
+    with pytest.raises(ValueError, match="Saved, but couldn't update the Chores calendar"):
+        cli._refresh_calendar(None)

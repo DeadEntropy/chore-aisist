@@ -168,9 +168,8 @@ def _refresh_calendar(conn) -> None:
         return
     try:
         written, _ = jobs.refresh_calendar(conn, cal, date.today())
-    except jobs.CalendarSyncError as exc:
-        print(f"Saved, but couldn't update the Chores calendar ({exc}); the next re-plan will.")
-        return
+    except jobs.CalendarSyncError as exc:              # the edit is committed: say so, but fail like `done` does
+        raise ValueError(f"Saved, but couldn't update the Chores calendar ({exc}); the next re-plan will") from exc
     print(f"Chores calendar: {written} events updated.")
 
 
