@@ -17,7 +17,7 @@ DB_TIMEOUT_SECONDS = 300                        # per read/write; far longer tha
 CHORE_COLUMNS = [
     "id", "name", "category", "type",
     "interval_min_days", "interval_target_days", "interval_max_days",
-    "duration_h", "priority", "assignee", "outdoor", "not_before", "active",
+    "duration_h", "priority", "assignee", "outdoor", "not_before", "active", "description",
 ]
 
 
@@ -235,24 +235,26 @@ def last_done_dates(conn) -> dict[str, date]:
 def planned_between(conn, start: datetime, end: datetime) -> list[PlannedRecord]:
     """Planned chores starting in [start, end), oldest first."""
     with conn.cursor() as cur:
-        cur.execute("SELECT id, chore_id, people, start_at, end_at, caldav_uid, status FROM planned"
+        cur.execute("SELECT id, chore_id, people, start_at, end_at, caldav_uid, status, weather FROM planned"
                     " WHERE start_at >= %s AND start_at < %s ORDER BY start_at, id", (start, end))
         return [PlannedRecord(r["chore_id"], r["people"].split(","), r["start_at"], r["end_at"], r["caldav_uid"],
-                              r["status"], r["id"]) for r in cur.fetchall()]
+                              r["status"], r["id"], r["weather"]) for r in cur.fetchall()]
 
 
 def add_planned(conn, record: PlannedRecord) -> None:
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO planned (chore_id, people, start_at, end_at, caldav_uid, status)"
-                    " VALUES (%s, %s, %s, %s, %s, %s)",
-                    (record.chore_id, ",".join(record.people), record.start, record.end, record.uid, record.status))
+        cur.execute("INSERT INTO planned (chore_id, people, start_at, end_at, caldav_uid, status, weather)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (record.chore_id, ",".join(record.people), record.start, record.end, record.uid, record.status,
+                     record.weather))
 
 
 def update_planned(conn, record: PlannedRecord) -> None:
-    """Update time, people and status of an existing record (matched on its UID)."""
+    """Update time, people, status and forecast of an existing record (matched on its UID)."""
     with conn.cursor() as cur:
-        cur.execute("UPDATE planned SET people = %s, start_at = %s, end_at = %s, status = %s WHERE caldav_uid = %s",
-                    (",".join(record.people), record.start, record.end, record.status, record.uid))
+        cur.execute("UPDATE planned SET people = %s, start_at = %s, end_at = %s, status = %s, weather = %s"
+                    " WHERE caldav_uid = %s",
+                    (",".join(record.people), record.start, record.end, record.status, record.weather, record.uid))
 
 
 def delete_planned(conn, uids: list[str]) -> None:

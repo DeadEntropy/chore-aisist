@@ -90,6 +90,7 @@ Backups are database dumps: they also keep the completion history and the saved 
 CREATE TABLE chore (
   id                 VARCHAR(64)  PRIMARY KEY,          -- e.g. 'weed-front-yard'
   name               VARCHAR(255) NOT NULL,
+  description        TEXT NULL,                         -- details for the calendar event: which trees, a store link
   category           VARCHAR(32)  NOT NULL,             -- home | garden
   type               VARCHAR(16)  NOT NULL,             -- recurring | one_off
   interval_min_days  INT NULL,                          -- recurring only
@@ -138,6 +139,7 @@ CREATE TABLE planned (
   end_at      DATETIME NOT NULL,
   caldav_uid  VARCHAR(255) NOT NULL UNIQUE,             -- chore-{chore_id}-{date}-{random}@chore-aisist
   status      VARCHAR(16) NOT NULL DEFAULT 'open',      -- open | done | skipped | unknown
+  weather     VARCHAR(255) NULL,                        -- outdoor: forecast over its time, from the last run with one
   updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
@@ -502,3 +504,6 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
   deadline. Priority decides how soon after the date it gets done.
 - **Weather**: only outdoor chores; average chance of rain over the chore ≤ 20%, no hour over 35 °C feels-like or UV 7;
   forecast used wherever it exists (10 days); ECMWF first; a missing forecast never stops the plan.
+- **Event body**: the chore's `description` (free text, set with `chore set <id> description=...`), then for outdoor
+  chores the forecast over its time (saved on the planned item, so a re-sync after a report keeps it), then
+  `ID: <chore-id>` to report it by. Editing a name or description updates the calendar at once.

@@ -8,7 +8,8 @@ Rules (each run plans from `now`: the evening run, and a re-plan right after eve
   changed, removed if the chore dropped out of the plan, and new ones are added.
 - `done` (✅) and `skipped` (⏭) items are never touched: they stay as history in the database.
 The Chores calendar shows what's still to do: the `open` (🧹) and `unknown` (❔) items of the `planned` table.
-Done and skipped items are taken off it (`desired_events`); the history stays in the database.
+Done and skipped items are taken off it (`desired_events`); the history stays in the database. Each event's body has
+the chore's description, the forecast over its time (outdoor chores) and the chore id, to report it by.
 
 Each item has its own event UID: chore, day and a random part. Nextcloud keeps a deleted event in its trash under
 the same name for a while, so re-creating and deleting an event with a reused name would collide there.
@@ -106,12 +107,28 @@ class EventData:
     start: datetime
     end: datetime
     reminder: int = 0                    # minutes before the start (0 = no reminder)
+    description: str = ""                # the event's body (see `event_body`)
 
 
-def desired_events(records: list[PlannedRecord], names: dict[str, str], reminder: int) -> dict[str, EventData]:
+def event_body(chore_id: str, description: str | None, weather: str | None) -> str:
+    """The chore's details, the forecast over its time, and the id to report it by:
+
+        Brown dyed mulch, 70 bags (Home Depot: https://...)
+
+        Forecast: rain 10-15%, feels like up to 31°C, UV up to 6
+        ID: remulch-house-front
+    """
+    parts = [description.strip()] if description and description.strip() else []
+    facts = ([f"Forecast: {weather}"] if weather else []) + [f"ID: {chore_id}"]
+    return "\n\n".join(parts + ["\n".join(facts)])
+
+
+def desired_events(records: list[PlannedRecord], names: dict[str, str], reminder: int,
+                   descriptions: dict[str, str | None] | None = None) -> dict[str, EventData]:
     """The events the Chores calendar should show: only what's still to do (🧹) or unreported (❔)."""
+    descriptions = descriptions or {}
     return {r.uid: EventData(r.uid, event_title(names.get(r.chore_id, r.chore_id), r.people, r.status),
-                             r.start, r.end, reminder)
+                             r.start, r.end, reminder, event_body(r.chore_id, descriptions.get(r.chore_id), r.weather))
             for r in records if r.status in SHOWN}
 
 
@@ -134,6 +151,8 @@ def build_ics(event: EventData, tz: ZoneInfo, now: datetime | None = None) -> st
     ev.add("dtstart", event.start.replace(tzinfo=tz))
     ev.add("dtend", event.end.replace(tzinfo=tz))
     ev.add("summary", event.title)
+    if event.description:
+        ev.add("description", event.description)
     ev.add("transp", "OPAQUE")
     if event.reminder > 0:
         alarm = icalendar.Alarm()
@@ -160,4 +179,5 @@ def event_from_component(component, tz: ZoneInfo) -> EventData:
         if trigger is not None and isinstance(trigger.dt, timedelta):
             reminder = round(-trigger.dt.total_seconds() / 60)
     return EventData(str(component.get("uid")), str(component.get("summary", "")), start,
-                     local(end.dt) if end else start, reminder)
+                     local(end.dt) if end else start, reminder,
+                     str(component.get("description", "")).replace("\r\n", "\n"))

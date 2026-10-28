@@ -21,6 +21,7 @@ class Chore:
     needs: list[str] = field(default_factory=list)
     active: bool = True
     created_on: date | None = None     # set by the database; one-offs wait from this date
+    description: str | None = None     # details shown in its calendar events (which trees, a store link...)
 
 
 @dataclass
@@ -105,6 +106,7 @@ class PlannedRecord:
     uid: str
     status: str = "open"                 # open | done | skipped | unknown
     id: int | None = None
+    weather: str | None = None           # outdoor chores: the forecast over its time, from the last run that had one
 
 
 @dataclass

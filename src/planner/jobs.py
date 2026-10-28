@@ -81,13 +81,15 @@ def run_plan(conn, cal, planning: PlanningSettings, now: datetime, events: list[
                               cal.buffer_minutes, planning, not_before=now, in_progress=in_progress,
                               forecast=forecast)[0]
         changes = plans.reconcile(records, result.plan.items, now)
+        outdoor = {c.id for c in db.get_chores(conn) if c.outdoor}
+        restamped = stamp_weather(records, changes, now, outdoor, forecast)
 
         for r in to_unknown:
             r.status = "unknown"
             db.update_planned(conn, r)
         for r in changes.add:
             db.add_planned(conn, r)
-        for r in changes.move:
+        for r in changes.move + restamped:
             db.update_planned(conn, r)
         db.delete_planned(conn, [r.uid for r in changes.remove])
         conn.commit()                       # the database is the source of truth; the calendar mirrors it
@@ -101,11 +103,36 @@ def run_plan(conn, cal, planning: PlanningSettings, now: datetime, events: list[
         return summary
 
 
+def stamp_weather(records: list[PlannedRecord], changes: plans.Changes, now: datetime, outdoor: set[str],
+                  forecast: Forecast | None) -> list[PlannedRecord]:
+    """Set the forecast text (shown in the event) on the outdoor items still to come after a re-plan. Added and moved
+    items get it in place; returns the kept items whose text changed, to be saved. Without a forecast (the weather
+    service failed), kept items keep the text they had."""
+    if forecast is None:
+        return []
+    removed = {r.uid for r in changes.remove}
+    moved = {r.uid for r in changes.move}
+    kept = [r for r in records if r.status == "open" and r.start >= now and r.uid not in removed | moved]
+    kept_uids = {r.uid for r in kept}
+    restamped = []
+    for r in changes.add + changes.move + kept:
+        text = None
+        if r.chore_id in outdoor:
+            text = weather.day_summary(forecast, r.start.date(), r.start.hour * 60 + r.start.minute,
+                                       r.end.hour * 60 + r.end.minute if r.end.date() == r.start.date() else 24 * 60)
+        if text != r.weather:
+            r.weather = text
+            if r.uid in kept_uids:
+                restamped.append(r)
+    return restamped
+
+
 def sync_calendar(conn, cal, first: date, last: date) -> tuple[int, int]:
     """Make the planner's events in the Chores calendar between `first` and `last` match the `planned` table."""
     records = db.planned_between(conn, _at(first), _at(last))
-    names = {c.id: c.name for c in db.get_chores(conn, include_inactive=True)}
-    desired = plans.desired_events(records, names, cal.reminder_minutes)
+    chores = db.get_chores(conn, include_inactive=True)
+    names = {c.id: c.name for c in chores}
+    desired = plans.desired_events(records, names, cal.reminder_minutes, {c.id: c.description for c in chores})
     existing = calendars.chore_events(cal, first, last)
     put, delete = plans.calendar_diff(desired, existing)
     calendars.write_chore_events(cal, put, delete)
@@ -155,6 +182,16 @@ def report(conn, cal, chore_id: str, outcome: str, day: date, by: list[str] | No
             except Exception as exc:
                 raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
         return record
+
+
+def refresh_calendar(conn, cal, today: date) -> tuple[int, int]:
+    """Rewrite the Chores calendar from the saved plan without re-planning, e.g. after a chore's name or description
+    changed. Holds the planner lock. Raises CalendarSyncError if the calendar couldn't be updated."""
+    with db.plan_lock(conn):
+        try:
+            return sync_calendar(conn, cal, today - timedelta(days=HISTORY_DAYS), today + timedelta(days=PERIOD_DAYS))
+        except Exception as exc:
+            raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
 
 
 # --- real runs: safety checks and the run log ---------------------------------------

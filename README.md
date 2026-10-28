@@ -82,10 +82,13 @@ planner import <file.json> [--update] [--retire]
                                          chores missing from the file (history is kept)
 planner export out.json                  snapshot the database as JSON
 planner chore list [--all]               show the catalog
+planner chore show <id>                  everything about one chore, with its description
 planner chore add <id> name=... category=home|garden type=recurring|one_off [more fields]
 planner chore set <id> key=value ...     e.g. interval=7,10,14 duration_h=1.5 priority=3
                                               assignee=nicolas|anna|either|both outdoor=yes needs=a,b
                                               not_before=2026-12-01 (not planned before that day)
+                                              description="Brown mulch\n70 bags" (shown in its calendar
+                                              events; \n starts a new line; editing it updates them at once)
 planner calendars                        list the calendars the app can read and whom each blocks
 planner plan                             plan the next 7 days, save it, update the Chores calendar
 planner done <chore> [--date D] [--by nicolas,anna]   record a chore as done (it leaves the calendar)

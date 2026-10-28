@@ -98,6 +98,7 @@ def chore_from_json(item: dict) -> Chore:
     return Chore(
         id=item["id"],
         name=item["name"],
+        description=item.get("description") or None,
         category=item["category"],
         type=item["type"],
         interval_min_days=interval.get("min"),
@@ -133,4 +134,5 @@ def chore_to_json(chore: Chore, done_ids: set[str]) -> dict:
         "needs": chore.needs,
         **({"not_before": chore.not_before.isoformat()} if chore.not_before else {}),
         **({} if chore.active else {"active": False}),
+        **({"description": chore.description} if chore.description else {}),
     }

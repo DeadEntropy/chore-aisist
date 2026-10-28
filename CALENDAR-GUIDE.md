@@ -161,6 +161,18 @@ reminder 30 minutes before (`REMINDER_MINUTES`):
 | `🧹 Mow the lawn (Nicolas)` | planned |
 | `❔ Mow the lawn (Nicolas)` | its time passed and nobody reported it |
 
+Open an event to see its details:
+```
+Brown dyed mulch, 2 cu ft bags × 70 (Home Depot: https://www.homedepot.com/p/...)
+
+Forecast: rain 10-15%, feels like up to 31°C, UV up to 6
+ID: order-mulch
+```
+- the chore's **description**, if it has one: which trees, which mulch, a store link, the paint reference. Ask Claude
+  Code to add or change it ("for the mulch, we want …"); the events update at once;
+- for outdoor chores, the **forecast** over its time, refreshed by every re-plan;
+- the chore's **ID**, to say exactly what you did ("done order-mulch").
+
 A chore reported done or skipped **leaves the calendar** at once. The history stays in the planner's database:
 `planner status`, or ask Claude Code ("when did we last mow?").
 
