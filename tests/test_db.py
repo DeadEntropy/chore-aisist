@@ -174,6 +174,11 @@ def test_not_before_round_trip(conn, tmp_path):
     assert db.get_chore(conn, "paint-wall").not_before == date(2026, 12, 1)
 
 
+def test_import_creates_chores_as_of_its_date(conn):
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    assert {c.created_on for c in db.get_chores(conn)} == {date(2026, 10, 25)}
+
+
 def test_description_round_trip(conn, tmp_path):
     seed.import_json(conn, SEED)
     db.update_chore(conn, "paint-wall", {"description": "Greek Villa, eggshell\nhttps://example.com/paint"})

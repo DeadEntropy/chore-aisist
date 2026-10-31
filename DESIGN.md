@@ -275,8 +275,10 @@ Indoor chores ignore the weather.
   daily re-plan follows the forecast anyway, so a chore kept off a day that turns dry comes back to it.) Lower
   `WEATHER_DAYS` to ignore far-off forecasts.
 - **Models:** weather models disagree, a lot in the Florida rainy season. `WEATHER_MODELS` lists Open-Meteo models in
-  order of preference; each value comes from the first that has it. Default `ecmwf_ifs025,best_match`: ECMWF
-  matched the phone's forecast best when it was chosen; it has no UV index, which then comes from `best_match`.
+  order of preference; each value comes from the first that has it (not every model has every value: ECMWF has
+  no UV index). Default `best_match`: in Florida its chance of rain is the US National Blend of Models (many models
+  blended). ECMWF first was tried and dropped: over a week of comparisons with the phone's forecast it was the
+  furthest off (e.g. 71–96% rain on a dry afternoon the blend and the phone put at 15–24%).
 - **Failure:** if the forecast can't be read, it's tried twice more (after 30 s and 60 s, so a short outage doesn't
   move outdoor chores back into the rain on everyone's phone), then the error is logged (and kept in the run log)
   and the plan is made without it, as before the weather existed: the weather is a nice-to-have, unlike the family
@@ -503,7 +505,7 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - **Not before**: a single optional date per chore (`not_before`) for "do this in early December"; not a season or a
   deadline. Priority decides how soon after the date it gets done.
 - **Weather**: only outdoor chores; average chance of rain over the chore ≤ 20%, no hour over 35 °C feels-like or UV 7;
-  forecast used wherever it exists (10 days); ECMWF first; a missing forecast never stops the plan.
+  forecast used wherever it exists (10 days); Open-Meteo's `best_match` (the US blend); a missing forecast never stops the plan.
 - **Event body**: the chore's `description` (free text, set with `chore set <id> description=...`), then for outdoor
   chores the forecast over its time (saved on the planned item, so a re-sync after a report keeps it), then
   `ID: <chore-id>` to report it by. Editing a name or description updates the calendar at once.
