@@ -243,7 +243,7 @@ container keeps the settings it started with until it's recreated.
 | `REMINDER_MINUTES` | `30` | Phone reminder before each planned chore (0 = none) |
 | `WEATHER_LATITUDE`, `WEATHER_LONGITUDE` | unset | Where the chores happen; unset = no weather |
 | `WEATHER_DAYS` | `10` | Forecast used for today and this many days after (0 = today only); lower it to ignore far-off forecasts |
-| `WEATHER_MODELS` | `ecmwf_ifs025,best_match` | [Open-Meteo models](https://open-meteo.com/en/docs), preferred first; each value comes from the first that has it |
+| `WEATHER_MODELS` | `best_match` | [Open-Meteo models](https://open-meteo.com/en/docs), preferred first; each value comes from the first that has it |
 | `MAX_RAIN_PERCENT` | `20` | Highest average chance of rain over an outdoor chore |
 | `MAX_FEELS_LIKE_C` | `35` | Hottest feels-like temperature (°C) in any hour of an outdoor chore |
 | `MAX_UV_INDEX` | `7` | Highest UV index in any hour of an outdoor chore |
