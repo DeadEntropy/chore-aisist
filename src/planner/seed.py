@@ -21,7 +21,8 @@ def import_json(conn, path: Path, today: date | None = None,
     never deleted, so their history is kept.
 
     Chores marked "status": "done" get a completion dated today (the real date is unknown), unless they already
-    have one.
+    have one. New chores are created as of `today` (one-offs wait from their creation day), so a given `today`
+    makes the import independent of the real date.
     """
     data = json.loads(path.read_text())
     today = today or date.today()
@@ -46,6 +47,7 @@ def import_json(conn, path: Path, today: date | None = None,
         in_file.append(chore)
         old = existing.get(chore.id)
         if old is None:
+            chore.created_on = today
             db.add_chore(conn, chore)
             summary["chores"] += 1
         elif update and (changes := _changes(old, chore)):

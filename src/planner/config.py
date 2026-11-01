@@ -24,7 +24,7 @@ class WeatherSettings:
     longitude: float
     timezone: str                              # forecast hours in local time (PLANNER_TIMEZONE)
     days: int = 10                             # WEATHER_DAYS: forecast used for today and this many days after
-    models: tuple[str, ...] = ("ecmwf_ifs025", "best_match")   # WEATHER_MODELS: Open-Meteo models, preferred first
+    models: tuple[str, ...] = ("best_match",)  # WEATHER_MODELS: Open-Meteo models, preferred first
     max_rain_percent: float = 20               # MAX_RAIN_PERCENT: average chance of rain over the chore
     max_feels_like_c: float = 35               # MAX_FEELS_LIKE_C: hottest hour of the chore
     max_uv_index: float = 7                    # MAX_UV_INDEX: sunniest hour of the chore
@@ -110,7 +110,7 @@ def load_weather_settings() -> WeatherSettings | None:
         longitude=longitude,
         timezone=os.environ.get("PLANNER_TIMEZONE", "America/New_York"),
         days=days,
-        models=tuple(m.strip() for m in os.environ.get("WEATHER_MODELS", "ecmwf_ifs025,best_match").split(",")
+        models=tuple(m.strip() for m in os.environ.get("WEATHER_MODELS", "best_match").split(",")
                      if m.strip()) or ("best_match",),
         max_rain_percent=limits["MAX_RAIN_PERCENT"],
         max_feels_like_c=limits["MAX_FEELS_LIKE_C"],

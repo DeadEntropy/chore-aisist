@@ -137,12 +137,14 @@ def get_chore(conn, chore_id: str) -> Chore | None:
 
 
 def add_chore(conn, chore: Chore) -> None:
-    """Insert the chore row only; call set_needs() once every referenced chore exists."""
-    values = [getattr(chore, col) for col in CHORE_COLUMNS]
+    """Insert the chore row only; call set_needs() once every referenced chore exists. `created_on`, if set, is
+    its creation date (else now)."""
+    columns = CHORE_COLUMNS + (["created_at"] if chore.created_on else [])
+    values = [getattr(chore, col) for col in CHORE_COLUMNS] + ([chore.created_on] if chore.created_on else [])
     with conn.cursor() as cur:
         cur.execute(
-            f"INSERT INTO chore ({', '.join(CHORE_COLUMNS)})"
-            f" VALUES ({', '.join(['%s'] * len(CHORE_COLUMNS))})",
+            f"INSERT INTO chore ({', '.join(columns)})"
+            f" VALUES ({', '.join(['%s'] * len(columns))})",
             values,
         )
 

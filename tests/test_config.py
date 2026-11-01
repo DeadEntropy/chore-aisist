@@ -97,7 +97,7 @@ def test_weather_is_optional(weather_env):
 def test_weather_settings_defaults(weather_env):
     weather_env(WEATHER_LATITUDE="10.5", WEATHER_LONGITUDE="-20.25")
     w = config.load_weather_settings()
-    assert w.models == ("ecmwf_ifs025", "best_match")
+    assert w.models == ("best_match",)
     assert (w.latitude, w.longitude, w.days, w.max_rain_percent, w.max_feels_like_c, w.max_uv_index) == \
         (10.5, -20.25, 10, 20, 35, 7)
 
