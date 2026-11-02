@@ -594,4 +594,5 @@ def test_lowering_plan_days_removes_what_was_planned_on_the_dropped_days(conn, m
     assert later() and all(r.uid in fake.events for r in later())       # the second weekend is planned
 
     jobs.run_plan(conn, _cal(), _planning(), thursday, [])              # back to 7 days
-    assert later() == [] and not [e for e in fake.events.values() if e.start >= datetime(2026, 11, 5)]
+    assert db.planned_between(conn, datetime(2026, 11, 5), datetime(2026, 11, 30)) == []    # deleted, any status
+    assert not [e for e in fake.events.values() if e.start >= datetime(2026, 11, 5)]
