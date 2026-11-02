@@ -31,11 +31,15 @@ class WeatherSettings:
     timeout_seconds: int = 15
 
 
+MAX_PLAN_DAYS = 28                             # PLAN_DAYS limit; the saved plan is always checked this far ahead
+
+
 @dataclass(frozen=True)
 class PlanningSettings:
     windows: Windows                           # default chore windows per weekday (CHORE_WINDOWS)
     extra_day_window: tuple[int, int]          # chore window on a "Day off" (EXTRA_DAY_WINDOW)
     weather: WeatherSettings | None = None     # None: outdoor chores are planned whatever the weather
+    plan_days: int = 7                         # PLAN_DAYS: each run plans today and the days after, this many in all
 
 
 @dataclass(frozen=True)
@@ -85,7 +89,15 @@ def load_planning_settings() -> PlanningSettings:
         windows=parse_windows(os.environ.get("CHORE_WINDOWS", "sat 08:00-18:00; sun 08:00-18:00")),
         extra_day_window=parse_window(os.environ.get("EXTRA_DAY_WINDOW", "08:00-18:00")),
         weather=load_weather_settings(),
+        plan_days=_plan_days(),
     )
+
+
+def _plan_days() -> int:
+    days = int(os.environ.get("PLAN_DAYS", "7"))
+    if not 1 <= days <= MAX_PLAN_DAYS:
+        raise ValueError(f"PLAN_DAYS must be 1 to {MAX_PLAN_DAYS}, got {days}")
+    return days
 
 
 def load_weather_settings() -> WeatherSettings | None:

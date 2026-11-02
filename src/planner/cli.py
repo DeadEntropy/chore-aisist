@@ -71,10 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("calendars", help="list the calendars the app can read, and who each one blocks")
     p.set_defaults(func=cmd_calendars)
 
-    p = sub.add_parser("plan", help="re-plan from now to the end of the 7 days and update the Chores calendar")
+    p = sub.add_parser("plan", help="re-plan from now to the end of PLAN_DAYS (7) days and update the Chores calendar")
     p.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
     p.add_argument("--date", type=date.fromisoformat, help="dry run: first day to plan (YYYY-MM-DD); default now")
-    p.add_argument("--weeks", type=_positive_int, default=1, help="dry run: plan N consecutive 7-day periods")
+    p.add_argument("--weeks", type=_positive_int, default=1, help="dry run: plan N consecutive periods of PLAN_DAYS days")
     p.add_argument("--no-calendar", action="store_true", help="dry run: ignore the family calendars (everyone free)")
     p.set_defaults(func=cmd_plan)
 
@@ -232,7 +232,7 @@ def cmd_plan(conn, args, settings):
         print("Calendars not configured (CALDAV_URL not set): only the default chore windows, everyone free.\n")
     else:
         jobs.check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
-        first, last = jobs.calendar_range(start, args.weeks)
+        first, last = jobs.calendar_range(start, args.weeks, planning.plan_days)
         try:
             events = calendars.fetch_events(cal, first, last)
         except Exception as exc:          # network, TLS, auth: report it plainly, don't plan on wrong data
@@ -282,9 +282,10 @@ def cmd_status(conn, args, settings):
     from planner.scoring import score_chores
 
     today = date.today()
+    ahead = load_planning_settings().plan_days
     names = {c.id: c.name for c in db.get_chores(conn, include_inactive=True)}
     records = db.planned_between(conn, datetime.combine(today - timedelta(days=7), datetime.min.time()),
-                                 datetime.combine(today + timedelta(days=8), datetime.min.time()))
+                                 datetime.combine(today + timedelta(days=ahead + 1), datetime.min.time()))
     day = None
     for r in records:
         if r.start.date() != day:
@@ -294,7 +295,7 @@ def cmd_status(conn, args, settings):
         print(f"  {STATUS_MARK[r.status]} {r.start:%H:%M}-{r.end:%H:%M}  {names.get(r.chore_id, r.chore_id)}"
               f"  ({who})  [{r.chore_id}]")
     if not records:
-        print("Nothing planned in the last or next 7 days.")
+        print(f"Nothing planned in the last 7 or next {ahead} days.")
     upcoming = {r.chore_id for r in records if r.status == "open" and r.start.date() >= today}
     scored, _ = score_chores(db.get_chores(conn), db.last_done_dates(conn), today)
     overdue = [s for s in scored if s.chore.type == "recurring" and s.urgency > 1 and s.chore.id not in upcoming]

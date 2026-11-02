@@ -2,7 +2,7 @@
 the real runs (`planner plan`, the re-plan after a report, the scheduler's runs) with their run log, the scheduler's
 check (back up, then re-plan when due) and health. `daemon` keeps the scheduler running; `cli` just calls in here.
 
-Planning works on periods of 7 days. Each day in a period has whatever chore time `availability` gives it:
+Planning works on periods of `PLAN_DAYS` days (7 by default). Each day in a period has whatever chore time `availability` gives it:
 by default Saturday and Sunday, plus extra time and minus busy time from the calendars. With a weather forecast,
 outdoor chores avoid the times it rules out (see `weather`); without one (not configured, or the weather service
 failed) they're planned as before.
@@ -16,13 +16,14 @@ from pathlib import Path
 
 from planner import backup, calendars, db, plans, scheduler, weather
 from planner.availability import first_available_day, first_default_day, free_slots, subtract
-from planner.config import BackupSettings, CalendarSettings, PlanningSettings, Settings
+from planner.config import MAX_PLAN_DAYS, BackupSettings, CalendarSettings, PlanningSettings, Settings
 from planner.fitting import plan_period
 from planner.models import CalEvent, Chore, Completion, Person, Plan, PlannedRecord, RunRecord
 from planner.weather import Forecast
 from planner.scoring import score_chores
 
-PERIOD_DAYS = 7
+SAVED_AHEAD_DAYS = MAX_PLAN_DAYS   # how far ahead the saved plan is re-planned and mirrored: beyond PLAN_DAYS too,
+                                   # so lowering PLAN_DAYS removes the chores planned on the days it drops
 LOOKAHEAD_DAYS = 42        # how far past a period to look for the next day anyone can do chores
 
 
@@ -36,9 +37,9 @@ class PeriodResult:
     weather: list[tuple[date, str]] = field(default_factory=list)   # forecast on the days with chore time
 
 
-def calendar_range(start: date, periods: int) -> tuple[date, date]:
+def calendar_range(start: date, periods: int, plan_days: int = 7) -> tuple[date, date]:
     """Dates to fetch events for: the planned periods plus the look-ahead."""
-    return start, start + timedelta(days=PERIOD_DAYS * periods + LOOKAHEAD_DAYS + 1)
+    return start, start + timedelta(days=plan_days * periods + LOOKAHEAD_DAYS + 1)
 
 
 HISTORY_DAYS = 14         # how far back the saved plan is checked (freezing, unknowns) and mirrored to the calendar
@@ -70,7 +71,7 @@ class RunSummary:
 
 def run_plan(conn, cal, planning: PlanningSettings, now: datetime, events: list[CalEvent],
              forecast: Forecast | None = None) -> RunSummary:
-    """Plan from `now` to the end of the 7-day period starting today, save it, and make the Chores calendar match
+    """Plan from `now` to the end of the `planning.plan_days` period starting today, save it, and make the Chores calendar match
     (see `plans` for the rules). Raises CalendarSyncError if only the calendar update failed.
     Holds the planner lock throughout, so a report from another process can't be overwritten mid-run."""
     with db.plan_lock(conn):
@@ -97,7 +98,7 @@ def run_plan(conn, cal, planning: PlanningSettings, now: datetime, events: list[
         summary = RunSummary(result, changes, to_unknown)
         try:
             summary.calendar_put, summary.calendar_deleted = sync_calendar(
-                conn, cal, start - timedelta(days=HISTORY_DAYS), start + timedelta(days=PERIOD_DAYS))
+                conn, cal, start - timedelta(days=HISTORY_DAYS), start + timedelta(days=SAVED_AHEAD_DAYS))
         except Exception as exc:
             raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
         return summary
@@ -152,7 +153,7 @@ def report(conn, cal, chore_id: str, outcome: str, day: date, by: list[str] | No
             raise ValueError(f"No chore with id '{chore_id}' (see `planner chore list`)")
         people = {p.id for p in db.get_people(conn)}
         record = plans.find_record(db.planned_between(conn, _at(day - timedelta(days=HISTORY_DAYS)),
-                                                      _at(day + timedelta(days=PERIOD_DAYS + 1))), chore_id, day)
+                                                      _at(day + timedelta(days=SAVED_AHEAD_DAYS + 1))), chore_id, day)
         if by:
             who = by
         elif record:
@@ -189,7 +190,8 @@ def refresh_calendar(conn, cal, today: date) -> tuple[int, int]:
     changed. Holds the planner lock. Raises CalendarSyncError if the calendar couldn't be updated."""
     with db.plan_lock(conn):
         try:
-            return sync_calendar(conn, cal, today - timedelta(days=HISTORY_DAYS), today + timedelta(days=PERIOD_DAYS))
+            return sync_calendar(conn, cal, today - timedelta(days=HISTORY_DAYS),
+                                 today + timedelta(days=SAVED_AHEAD_DAYS))
         except Exception as exc:
             raise CalendarSyncError(f"{type(exc).__name__}: {exc}") from exc
 
@@ -271,7 +273,7 @@ def _plan_now(conn, cal: CalendarSettings | None, planning: PlanningSettings) ->
         raise ValueError("Writing the plan needs the calendars (CALDAV_URL not set); use --dry-run to only print it")
     check_calendar_people(cal.people(), {p.id for p in db.get_people(conn)})
     now = datetime.now()
-    events = fetch_events(cal, *calendar_range(now.date(), 1))
+    events = fetch_events(cal, *calendar_range(now.date(), 1, planning.plan_days))
     forecast, weather_error = fetch_weather(planning, now.date())
     try:
         summary = run_plan(conn, cal, planning, now, events, forecast)
@@ -357,7 +359,7 @@ def health(conn, now: datetime, backups: BackupSettings | None) -> tuple[list[st
 
 def _saved(conn, start: date) -> list[PlannedRecord]:
     return db.planned_between(conn, _at(start - timedelta(days=HISTORY_DAYS)),
-                              _at(start + timedelta(days=PERIOD_DAYS)))
+                              _at(start + timedelta(days=SAVED_AHEAD_DAYS)))
 
 
 def _at(day: date) -> datetime:
@@ -368,7 +370,7 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
                  periods: int, events: list[CalEvent], buffer_minutes: int,
                  planning: PlanningSettings, not_before: datetime | None = None,
                  in_progress: list[PlannedRecord] = (), forecast: Forecast | None = None) -> list[PeriodResult]:
-    """Plan `periods` consecutive 7-day periods from `start` (pure: no database, no network).
+    """Plan `periods` consecutive periods of `planning.plan_days` days from `start` (pure: no database, no network).
 
     With `not_before` (normally now), nothing is planned before the next quarter hour after it. `in_progress` items
     (started, not reported, not ended) aren't planned again in the period they're in; they keep their people's time
@@ -385,8 +387,8 @@ def plan_periods(chores: list[Chore], people: list[Person], last_done: dict[str,
             last_done[r.chore_id] = r.start.date()
     results = []
     for k in range(periods):
-        first = start + timedelta(days=PERIOD_DAYS * k)
-        days = [first + timedelta(days=i) for i in range(PERIOD_DAYS)]
+        first = start + timedelta(days=planning.plan_days * k)
+        days = [first + timedelta(days=i) for i in range(planning.plan_days)]
         free = free_slots(person_ids, days, planning.windows, events, buffer_minutes, planning.extra_day_window)
         if not_before is not None and not_before.date() in days:
             cutoff = not_before.hour * 60 + not_before.minute + (1 if not_before.second else 0)   # fitting rounds up

@@ -72,6 +72,7 @@ services:
       CHORES_CALENDAR_URI: ${CHORES_CALENDAR_URI:-chores}
       REMINDER_MINUTES: ${REMINDER_MINUTES:-30}
       PLAN_TIMES: ${PLAN_TIMES:-20:00}
+      PLAN_DAYS: ${PLAN_DAYS:-7}
       # Weather for outdoor chores: optional, leave WEATHER_LATITUDE unset in .env for none.
       WEATHER_LATITUDE: ${WEATHER_LATITUDE:-}
       WEATHER_LONGITUDE: ${WEATHER_LONGITUDE:-}

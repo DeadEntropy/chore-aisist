@@ -74,7 +74,7 @@ cd <deploy-dir>/chore-aisist
 docker compose exec chore-aisist planner plan --dry-run
 ```
 
-Each 7-day period starts with the events that affect chore time:
+Each period (`PLAN_DAYS`, 7 days by default) starts with the events that affect chore time:
 ```
 === Tue 27 Oct – Mon 02 Nov 2026
   Busy: Sat 31 Oct 09:15-10:30  Swimming  (Nicolas & Anna)
@@ -152,7 +152,7 @@ remove the share or subscription in Nextcloud.
 
 ## 4. The Chores calendar (what the planner writes)
 
-`planner plan` saves the plan for the next 7 days and shows it in the **Chores** calendar, which you and Anna see
+`planner plan` saves the plan for the next `PLAN_DAYS` days (7 by default) and shows it in the **Chores** calendar, which you and Anna see
 read-only. It shows only what's still to do. Each chore is a timed event, starting on a quarter hour, with a
 reminder 30 minutes before (`REMINDER_MINUTES`):
 
@@ -176,7 +176,7 @@ ID: order-mulch
 A chore reported done or skipped **leaves the calendar** at once. The history stays in the planner's database:
 `planner status`, or ask Claude Code ("when did we last mow?").
 
-How re-planning works. The planner re-plans **from the current moment** to the end of a 7-day window: every evening
+How re-planning works. The planner re-plans **from the current moment** to the end of a `PLAN_DAYS` window: every evening
 at 20:00 (`PLAN_TIMES`), and **right after every `done` / `skip`**.
 - Chores that already started are fixed: nothing in the past is moved. A chore in progress keeps its time, so
   nothing new is planned on top of it, and a chore that needs it comes after it.
@@ -214,7 +214,7 @@ An outdoor chore doesn't go at a time when:
 - **any hour** of it feels hotter than 35 °C / 95 °F (`MAX_FEELS_LIKE_C`), or has a UV index over 7
   (`MAX_UV_INDEX`; 8 and up burns fast): typically the early afternoon in summer.
 
-It then goes to the next good time (later that day, or another day); if there's none in the 7 days, it's left out this
+It then goes to the next good time (later that day, or another day); if there's none in the planned days, it's left out this
 time and comes back later. Indoor chores ignore the weather. `planner plan --dry-run` shows the forecast it used:
 ```
   Weather: Sun 01 Nov  rain 33-86%, feels like up to 32°C, UV up to 6
@@ -247,6 +247,7 @@ container keeps the settings it started with until it's recreated.
 | `MAX_RAIN_PERCENT` | `20` | Highest average chance of rain over an outdoor chore |
 | `MAX_FEELS_LIKE_C` | `35` | Hottest feels-like temperature (°C) in any hour of an outdoor chore |
 | `MAX_UV_INDEX` | `7` | Highest UV index in any hour of an outdoor chore |
+| `PLAN_DAYS` | `7` | Days each run plans, today included (1 to 28). With 7, a Sunday-evening run doesn't reach next Sunday; 10 always shows the next weekend |
 | `PLAN_TIMES` | `20:00` | When the planner re-plans every day on its own; add a morning run with e.g. `07:00,20:00` |
 | `BACKUP_FOLDER` | `./backups` | Host folder for the database dumps made before every scheduled run; on another disk than `./db`, writable by the image's user (`APP_UID`) |
 | `BACKUP_KEEP_DAYS` | `30` | Days of dumps to keep (the newest is never deleted) |
