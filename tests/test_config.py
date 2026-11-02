@@ -110,3 +110,16 @@ def test_bad_weather_settings(weather_env, values):
     weather_env(**values)
     with pytest.raises(ValueError):
         config.load_weather_settings()
+
+
+@pytest.mark.parametrize("value, ok", [(None, 7), ("10", 10), ("28", 28), ("0", None), ("29", None)])
+def test_plan_days(env, monkeypatch, value, ok):
+    for key in ("PLAN_DAYS", "WEATHER_LATITUDE", "WEATHER_LONGITUDE"):
+        monkeypatch.delenv(key, raising=False)
+    if value is not None:
+        env(PLAN_DAYS=value)
+    if ok is None:
+        with pytest.raises(ValueError):
+            config.load_planning_settings()
+    else:
+        assert config.load_planning_settings().plan_days == ok

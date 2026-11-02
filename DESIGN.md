@@ -185,7 +185,7 @@ score = urgency * priority
 
 Before scoring, find the **next available weekend** after this one (skipping weekends blocked by travel). If a chore would pass `max` before that next available weekend, bump its score as if it were overdue now. This front-loads work before a trip and naturally produces a catch-up plan afterwards.
 
-Implemented: planning works on **7-day periods** (from tomorrow, by default). After a period, the *normal* next chore
+Implemented: planning works on **periods of `PLAN_DAYS` days** (7 by default) (from tomorrow, by default). After a period, the *normal* next chore
 day comes from the default windows (e.g. next Saturday); the *actual* one also accounts for the calendars (travel,
 "No chores", busy days). If the actual one is later, chores are still scored as of the period's first day, except
 recurring chores that would be past `max` by then: those are scored as they would be then and are eligible now even
@@ -247,7 +247,7 @@ Greedy fitting is good enough for a handful of chores per weekend; revisit only 
 
 Placement details: `either` goes to the person with the most free time left in the period; `both` needs a slot where
 both are free. Each chore goes in the **earliest** long-enough free slot: earliest-first keeps the daily
-re-plans stable (a new day appearing at the end of the 7-day window doesn't pull chores away from the next days). Chores appear in the Chores calendar as
+re-plans stable (a new day appearing at the end of the window doesn't pull chores away from the next days). Chores appear in the Chores calendar as
 **timed events** (e.g. `Sat 09:00–10:30 🧹 Mow the lawn (Nicolas)`).
 
 `planner plan --dry-run [--date D] [--weeks N]` prints the plan without writing anything; with `--weeks N` it assumes
@@ -271,7 +271,7 @@ with the reason (`weather whenever it would fit (Sun 01 Nov 08:00: rain 33% > 20
 Indoor chores ignore the weather.
 
 - **Horizon:** the forecast is used wherever it exists: today and the next `WEATHER_DAYS` (10) days, more than the
-  7 days a plan covers. (A 3-day limit, because forecasts a week out are unreliable, was tried and dropped: the
+  7 days a plan covers by default. (A 3-day limit, because forecasts a week out are unreliable, was tried and dropped: the
   daily re-plan follows the forecast anyway, so a chore kept off a day that turns dry comes back to it.) Lower
   `WEATHER_DAYS` to ignore far-off forecasts.
 - **Models:** weather models disagree, a lot in the Florida rainy season. `WEATHER_MODELS` lists Open-Meteo models in
@@ -301,9 +301,9 @@ All access is as the app's Nextcloud user (`<app-user>`) with an app password (s
 - **Only what's still to do is shown:** `open` (🧹) and `unknown` (❔) items. A done or skipped item is taken off the
   calendar when it's reported; its history stays in the database (`completion`, and the item's status in `planned`).
 - **Single writer, calendar mirrors the database**: the `planned` table is the source of truth; after each change the
-  planner makes its events in the Chores calendar (last 14 days → next 7) match it: create, update, delete. Only
+  planner makes its events in the Chores calendar (last 14 days → next 28, so lowering `PLAN_DAYS` clears the days it drops) match it: create, update, delete. Only
   events with a `@chore-aisist` UID are ever deleted. Nicolas and Anna have read-only access.
-- **Re-planning rules** (each run plans the 7 days from tomorrow): items before tomorrow are frozen; an open frozen
+- **Re-planning rules** (each run plans `PLAN_DAYS` days): items before tomorrow are frozen; an open frozen
   item whose time has passed becomes `unknown` and its chore goes back into the pool; one later today stays open and
   isn't planned again; open items from tomorrow on are re-planned (kept, moved, removed, added); `done`/`skipped`
   items are never changed. See `CALENDAR-GUIDE.md` §4.
@@ -343,7 +343,7 @@ vocabulary for Claude Code.
 
 | Schedule | Job |
 |---|---|
-| Every day 20:00 (phase 4a, `PLAN_TIMES`) | Back up the database → mark unreported past chores ❔ → re-plan from now to the end of the 7-day window → update the Chores calendar (sending a brief is phase 4b) |
+| Every day 20:00 (phase 4a, `PLAN_TIMES`) | Back up the database → mark unreported past chores ❔ → re-plan from now to the end of the `PLAN_DAYS` window → update the Chores calendar (sending a brief is phase 4b) |
 | After every `done` / `skip` | The same re-plan, from that moment |
 
 The schedule runs **inside** the app container (so `docker exec` always has a running container to talk to);
@@ -509,3 +509,5 @@ The LLM never decides *what* is scheduled; it only explains the plan. If the API
 - **Event body**: the chore's `description` (free text, set with `chore set <id> description=...`), then for outdoor
   chores the forecast over its time (saved on the planned item, so a re-sync after a report keeps it), then
   `ID: <chore-id>` to report it by. Editing a name or description updates the calendar at once.
+- **Planning window**: `PLAN_DAYS` days per run (default 7; the deployment uses 10 so a Sunday-evening run already shows
+  next weekend). The saved plan and the Chores calendar are always reconciled 28 days ahead, so lowering it is safe.

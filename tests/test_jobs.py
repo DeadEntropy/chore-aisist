@@ -326,3 +326,13 @@ def test_without_a_forecast_items_keep_their_text():
                       weather="rain 10%")
     assert jobs.stamp_weather([r], Changes(), datetime(2026, 10, 30), {"mulch"}, None) == []
     assert r.weather == "rain 10%"
+
+
+def test_a_longer_window_reaches_the_next_weekend():
+    monday = SAT + timedelta(days=2)                    # Mon 2 Nov: 7 days end Sunday 8, 10 days reach Wed 11
+    ten = PlanningSettings(PLANNING.windows, PLANNING.extra_day_window, plan_days=10)
+    chores = [one_off(f"c{i}", hours=5) for i in range(5)]
+    seven = plan_periods(chores, PERSONS, {}, monday - timedelta(days=1), 1, [], 30, PLANNING)[0]
+    longer = plan_periods(chores, PERSONS, {}, monday - timedelta(days=1), 1, [], 30, ten)[0]
+    assert len(seven.plan.days) == 7 and len(longer.plan.days) == 10
+    assert max(i.start.date() for i in longer.plan.items) > max(i.start.date() for i in seven.plan.items)

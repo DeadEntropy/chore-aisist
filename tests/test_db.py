@@ -578,3 +578,21 @@ def test_descriptions_and_forecasts_reach_the_events(conn, monkeypatch):
     conn.commit()
     written, _ = jobs.refresh_calendar(conn, _cal(), date(2026, 10, 29))
     assert written >= 1 and fake.events[in_rec.uid].description == f"Use the blue toolbox\n\nID: {in_rec.chore_id}"
+
+
+def test_lowering_plan_days_removes_what_was_planned_on_the_dropped_days(conn, monkeypatch):
+    from dataclasses import replace
+
+    from planner import jobs
+    fake = FakeChoresCalendar(monkeypatch)
+    seed.import_json(conn, SEED, today=date(2026, 10, 25))
+    thursday = datetime(2026, 10, 29, 20)                      # 7 days: to Wed 4 Nov; 10 days: to Sat 7 Nov
+    later = lambda: [r for r in db.planned_between(conn, datetime(2026, 11, 5), datetime(2026, 11, 30))
+                     if r.status == "open"]
+
+    jobs.run_plan(conn, _cal(), replace(_planning(), plan_days=10), thursday, [])
+    assert later() and all(r.uid in fake.events for r in later())       # the second weekend is planned
+
+    jobs.run_plan(conn, _cal(), _planning(), thursday, [])              # back to 7 days
+    assert db.planned_between(conn, datetime(2026, 11, 5), datetime(2026, 11, 30)) == []    # deleted, any status
+    assert not [e for e in fake.events.values() if e.start >= datetime(2026, 11, 5)]

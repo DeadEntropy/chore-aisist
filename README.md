@@ -90,15 +90,15 @@ planner chore set <id> key=value ...     e.g. interval=7,10,14 duration_h=1.5 pr
                                               description="Brown mulch\n70 bags" (shown in its calendar
                                               events; \n starts a new line; editing it updates them at once)
 planner calendars                        list the calendars the app can read and whom each blocks
-planner plan                             plan the next 7 days, save it, update the Chores calendar
+planner plan                             plan the next PLAN_DAYS days (7), save it, update the Chores calendar
 planner done <chore> [--date D] [--by nicolas,anna]   record a chore as done (it leaves the calendar)
 planner skip <chore> [--date D]          record a chore as skipped (it leaves the calendar)
-planner status                           last/next 7 days with ✅ ⏭ ❔ 🧹, and what's overdue
+planner status                           last 7 / next PLAN_DAYS days with ✅ ⏭ ❔ 🧹, and what's overdue
 planner serve                            the scheduler: re-plan every day at PLAN_TIMES (the container's command)
 planner health                           exit 0 if a run and a backup succeeded in the last 26 hours (healthcheck)
 planner backup                           dump the database to BACKUP_DIR now (e.g. before migrate)
 planner plan --dry-run [--date YYYY-MM-DD] [--weeks N] [--no-calendar]
-                                         print the plan for the next 7 days (and the next N-1
+                                         print the plan for the next PLAN_DAYS days (and the next N-1
                                          periods, assuming planned chores get done), around
                                          the family calendars; writes nothing
 ```
